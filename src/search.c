@@ -39,6 +39,7 @@ struct Search {
     unsigned options;       /* SEARCH_* switches */
     const Weights *weights;
     bool zero_weights;      /* all weights 0: generation 0 */
+    bool structure;         /* any mobility/pawn/pair weight: otherwise skip that part */
     int piece_value[6];     /* learned: average weight of each piece type */
     int history[2][64][64]; /* [side][from][to] */
 
@@ -115,18 +116,24 @@ bool search_parse_options(const char *text, unsigned *options) {
 void search_set_weights(Search *s, const Weights *weights) {
     s->weights = weights ? weights : &zero_weights;
 
+    s->structure = weights_have_structure(s->weights);
     s->zero_weights = true;
     for (int i = 0; i < FEATURE_COUNT; i++)
         s->zero_weights = s->zero_weights && s->weights->w[i] == 0;
 
-    /* Squares a piece never stood on in training keep weight 0 and are left out. */
+    /*
+     * Average piece-square weight of each type over both phases. Squares a
+     * piece never stood on in training keep weight 0 and are left out.
+     */
     for (int type = 0; type < 6; type++) {
         int64_t sum = 0;
         int used = 0;
-        for (int sq = 0; sq < 64; sq++) {
-            int32_t w = s->weights->w[type * 64 + sq];
-            sum += w;
-            used += w != 0;
+        for (int phase = 0; phase < 2; phase++) {
+            for (int sq = 0; sq < 64; sq++) {
+                int32_t w = s->weights->w[phase * FEATURE_EG + F_PSQ + type * 64 + sq];
+                sum += w;
+                used += w != 0;
+            }
         }
         s->piece_value[type] = used ? (int)(sum / used) : 0;
     }
@@ -291,17 +298,21 @@ static void reward_history(int *entry, int depth) {
     *entry += bonus - *entry * bonus / HISTORY_MAX; /* stays within HISTORY_MAX */
 }
 
-/* psq: the incrementally kept weight sum of b (see eval_psq). */
-static int qsearch(Search *s, const Board *b, int psq, int alpha, int beta, int ply) {
+static inline int evaluate(const Search *s, const Board *b, Psq psq) {
+    return s->structure ? eval_static(s->weights, b, psq) : eval_mix(b, psq.mg, psq.eg);
+}
+
+/* psq: the incrementally kept piece-square sums of b (see eval_psq). */
+static int qsearch(Search *s, const Board *b, Psq psq, int alpha, int beta, int ply) {
     s->pv_len[ply] = 0;
-    assert(psq == eval_psq(s->weights, b));
+    assert(psq_equal(psq, eval_psq(s->weights, b)));
     s->nodes++;
     if (ply > s->seldepth)
         s->seldepth = ply;
     if (should_stop(s))
         return 0;
     if (ply >= MAX_PLY - 1)
-        return eval_from_psq(psq, b->side);
+        return evaluate(s, b, psq);
 
     /* In check there is no standing pat: try every evasion, none means mate. */
     bool in_check = board_in_check(b);
@@ -309,7 +320,7 @@ static int qsearch(Search *s, const Board *b, int psq, int alpha, int beta, int 
     if (in_check) {
         best = -SCORE_MATE + ply;
     } else {
-        best = eval_from_psq(psq, b->side);
+        best = evaluate(s, b, psq);
         if (best >= beta)
             return best;
         if (best > alpha)
@@ -330,7 +341,7 @@ static int qsearch(Search *s, const Board *b, int psq, int alpha, int beta, int 
         Board next;
         if (!board_make_move_fast(b, m, &next, pinned, in_check))
             continue;
-        int score = -qsearch(s, &next, psq + eval_psq_delta(s->weights, b, m), -beta, -alpha, ply + 1);
+        int score = -qsearch(s, &next, psq_add(psq, eval_psq_delta(s->weights, b, m)), -beta, -alpha, ply + 1);
         if (s->stopped)
             return 0;
         if (score > best) {
@@ -376,9 +387,9 @@ bool search_quiet(Search *s, const Board *b, uint64_t max_nodes, Board *leaf, in
     return true;
 }
 
-static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int beta, int ply) {
+static int negamax(Search *s, const Board *b, Psq psq, int depth, int alpha, int beta, int ply) {
     s->pv_len[ply] = 0;
-    assert(psq == eval_psq(s->weights, b));
+    assert(psq_equal(psq, eval_psq(s->weights, b)));
 
     bool root = ply == 0;
     if (!root && is_draw(s, b))
@@ -396,7 +407,7 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
 
     if (!root) {
         if (ply >= MAX_PLY - 1)
-            return eval_from_psq(psq, b->side);
+            return evaluate(s, b, psq);
         /* A mate found closer to the root can't be beaten here. */
         if (alpha < -SCORE_MATE + ply)
             alpha = -SCORE_MATE + ply;
@@ -432,7 +443,7 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
     const Bitboard *own = b->pieces[b->side];
     if ((s->options & SEARCH_NMP) && !s->zero_weights && !root && !pv_node && !in_check && depth >= 3
         && (own[KNIGHT] | own[BISHOP] | own[ROOK] | own[QUEEN])
-        && eval_from_psq(psq, b->side) >= beta) {
+        && evaluate(s, b, psq) >= beta) {
         Board null;
         board_make_null(b, &null);
         int reduction = 2 + depth / 4;
@@ -487,7 +498,7 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
             continue;
         legal++;
 
-        int child_psq = psq + eval_psq_delta(s->weights, b, m);
+        Psq child_psq = psq_add(psq, eval_psq_delta(s->weights, b, m));
         s->hashes[s->hash_count++] = next.hash;
         int score;
         if (root || !(s->options & SEARCH_PVS) || legal == 1) {
@@ -618,7 +629,7 @@ SearchResult search_run(Search *s, const Game *game, const SearchLimits *limits,
         return result;
     }
 
-    int root_psq = eval_psq(s->weights, root);
+    Psq root_psq = eval_psq(s->weights, root);
     int max_depth = limits->depth > 0 && limits->depth < MAX_PLY ? limits->depth : MAX_PLY - 1;
     for (int depth = 1; depth <= max_depth; depth++) {
         s->seldepth = 0;

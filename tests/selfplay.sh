@@ -30,9 +30,10 @@ cmp -s "$tmp/one.bin" "$tmp/weighted.bin" && fail "weights do not change the gam
 "$engine" selfplay --games 1 --out "$tmp/x.bin" --weights "$tmp/missing.bin" 2>/dev/null \
     && fail "missing weight file accepted"
 
-# Training self-play with weights and --search exact is pinned: it must stay byte-identical to
-# the engine that produced runs 1 and 4. Update only for an intended change of training play.
-timeout 60 "$engine" selfplay --games 6 --nodes 1500 --threads 3 --seed 5 --weights "$tmp/random-weights.bin" \
+# Training self-play with old-format (piece-square only) weights and --search exact is pinned:
+# it must stay byte-identical to the engine that produced runs 1 and 4. Update only for an
+# intended change of training play.
+timeout 60 "$engine" selfplay --games 6 --nodes 1500 --threads 3 --seed 5 --weights "$tmp/random-weights-v1.bin" \
     --search exact --out "$tmp/pin.bin" >/dev/null 2>&1 || fail "pinned self-play run"
 [ "$(sha256sum "$tmp/pin.bin" | cut -d' ' -f1)" = 10416e78542d270b4a922a96bdd65eda4f83b824a0bc5e71d63ea338bfb5be99 ] \
     || fail "self-play with --search exact changed (training would no longer reproduce runs 1/4)"

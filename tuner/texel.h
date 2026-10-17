@@ -13,15 +13,13 @@
  */
 #define SIGMOID_SCALE 0.005756462732485115 /* ln(10) / 400 */
 
-/* Packed feature: index in the low 15 bits, the top bit set for -1. */
-typedef uint16_t PackedFeature;
-#define FEATURE_NEGATIVE 0x8000
-
 typedef struct {
     size_t count;
     size_t train_count;
-    PackedFeature (*features)[MAX_ACTIVE_FEATURES];
-    uint8_t *feature_count;
+    /* Features of position i are index/value[offset[i] .. offset[i+1]). */
+    uint64_t *offset;
+    uint16_t *index;
+    int8_t *value;     /* phase share (see features.h), signed from the labelled side's view */
     float *target;     /* result for the side to move: 0, 0.5 or 1 */
     bool *validation;  /* every val_every-th game goes to validation */
     uint64_t seen[FEATURE_COUNT]; /* training positions using each feature */

@@ -151,7 +151,7 @@ static void test_mates(void) {
     static const int value[6] = { 100, 300, 300, 500, 900, 0 }; /* test fixture, not engine knowledge */
     for (int type = 0; type < 6; type++)
         for (int sq = 0; sq < 64; sq++)
-            material.w[type * 64 + sq] = value[type];
+            material.w[F_PSQ + type * 64 + sq] = material.w[FEATURE_EG + F_PSQ + type * 64 + sq] = value[type];
 
     for (int weighted = 0; weighted < 2; weighted++) {
         search_set_weights(search, weighted ? &material : NULL);
@@ -222,7 +222,7 @@ static void test_quiet_leaf(void) {
     Weights queen;
     weights_zero(&queen);
     for (int sq = 0; sq < 64; sq++)
-        queen.w[QUEEN * 64 + sq] = 900;
+        queen.w[F_PSQ + QUEEN * 64 + sq] = queen.w[FEATURE_EG + F_PSQ + QUEEN * 64 + sq] = 900;
     search_set_weights(search, &queen);
     int score = 1;
     bool resolved = search_quiet(search, &b, 0, &leaf, &score, NULL);

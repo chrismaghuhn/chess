@@ -29,23 +29,44 @@ typedef struct {
 int eval_evaluate(const Weights *weights, const Board *b);
 
 /*
- * The same sum kept incrementally by the search: "psq" is the unclamped
- * weight sum from white's view. eval_psq_delta gives its change for a move
- * (from the board before the move), eval_from_psq the clamped evaluation for
- * the side to move. eval_from_psq(eval_psq(w, b), b->side) == eval_evaluate(w, b).
+ * The search keeps the piece-square part incrementally: the middlegame and
+ * endgame sums from white's view, unclamped. eval_psq_delta gives their
+ * change for a move (from the board before the move). eval_static adds the
+ * rest (mobility, pawns, bishop pair), mixes the phases and clamps:
+ * eval_static(w, b, eval_psq(w, b)) == eval_evaluate(w, b).
  */
-int eval_psq(const Weights *weights, const Board *b);
-int eval_psq_delta(const Weights *weights, const Board *before, Move m);
+typedef struct {
+    int mg, eg;
+} Psq;
 
-static inline int eval_from_psq(int psq, int side) {
-    int score = side == WHITE ? psq : -psq;
-    return score > EVAL_MAX ? EVAL_MAX : score < -EVAL_MAX ? -EVAL_MAX : score;
+Psq eval_psq(const Weights *weights, const Board *b);
+Psq eval_psq_delta(const Weights *weights, const Board *before, Move m);
+int eval_static(const Weights *weights, const Board *b, Psq psq);
+
+/* Mixes white's-view phase sums by the game phase; side to move's view, clamped. */
+int eval_mix(const Board *b, int mg, int eg);
+
+/*
+ * Whether any non-piece-square weight is nonzero. Without, eval_static equals
+ * eval_mix(b, psq.mg, psq.eg), which the search uses to skip the expensive part.
+ */
+bool weights_have_structure(const Weights *weights);
+
+static inline Psq psq_add(Psq a, Psq b) {
+    Psq sum = { a.mg + b.mg, a.eg + b.eg };
+    return sum;
+}
+
+static inline bool psq_equal(Psq a, Psq b) {
+    return a.mg == b.mg && a.eg == b.eg;
 }
 
 /*
  * Weight files: "SCHW", version (uint32), feature count (uint32), then one
  * float32 per feature, all little-endian. The engine rounds to integers;
- * the tuner keeps floats.
+ * the tuner keeps floats. Files with LEGACY_FEATURE_COUNT weights (piece-square
+ * only, from before the phase features) load into both phases, which gives
+ * exactly their old evaluation.
  */
 #define WEIGHTS_VERSION 1
 

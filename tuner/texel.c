@@ -34,11 +34,20 @@ typedef struct {
     TuneData *d;
     const uint8_t (*records)[DATA_RECORD_SIZE];
     const Weights *weights;
-    int threads, id;
+    size_t begin, end;       /* this job's positions */
+    uint16_t *index;         /* their features, in position order */
+    int8_t *value;
+    size_t length, capacity;
+    uint16_t *counts;        /* features per position */
     size_t invalid, unresolved;
     uint64_t nodes;
 } ResolveJob;
 
+/*
+ * Each job resolves a contiguous range of positions into its own buffers;
+ * they are joined in order afterwards, so the result does not depend on
+ * the number of threads.
+ */
 static void *resolve_worker(void *arg) {
     ResolveJob *job = arg;
     TuneData *d = job->d;
@@ -48,12 +57,12 @@ static void *resolve_worker(void *arg) {
         exit(1);
     }
     search_set_weights(s, job->weights);
+    job->counts = checked_calloc(job->end - job->begin, sizeof *job->counts);
 
-    for (size_t i = (size_t)job->id; i < d->count; i += (size_t)job->threads) {
+    for (size_t i = job->begin; i < job->end; i++) {
         DataPosition pos;
         if (!data_unpack(job->records[i], &pos)) {
             job->invalid++;
-            d->feature_count[i] = 0;
             continue;
         }
         Board leaf;
@@ -65,12 +74,22 @@ static void *resolve_worker(void *arg) {
         /* Features are from the leaf's side to move; the label is from the root's. */
         Feature f[MAX_ACTIVE_FEATURES];
         int n = features_extract(&leaf, f);
-        bool flip = leaf.side != pos.board.side;
-        for (int k = 0; k < n; k++) {
-            bool negative = (f[k].sign < 0) != flip;
-            d->features[i][k] = (PackedFeature)(f[k].index | (negative ? FEATURE_NEGATIVE : 0));
+        int flip = leaf.side != pos.board.side ? -1 : 1;
+        if (job->length + (size_t)n > job->capacity) {
+            job->capacity = (job->capacity + (size_t)n) * 2;
+            job->index = realloc(job->index, job->capacity * sizeof *job->index);
+            job->value = realloc(job->value, job->capacity * sizeof *job->value);
+            if (!job->index || !job->value) {
+                fprintf(stderr, "out of memory\n");
+                exit(1);
+            }
         }
-        d->feature_count[i] = (uint8_t)n;
+        for (int k = 0; k < n; k++) {
+            job->index[job->length] = f[k].index;
+            job->value[job->length] = (int8_t)(flip * f[k].value);
+            job->length++;
+        }
+        job->counts[i - job->begin] = (uint16_t)n;
         d->target[i] = (float)pos.result / 2.0f;
     }
     search_free(s);
@@ -124,27 +143,49 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every,
         fclose(f);
     }
 
-    d->features = checked_calloc(d->count, sizeof *d->features);
-    d->feature_count = checked_calloc(d->count, sizeof *d->feature_count);
     d->target = checked_calloc(d->count, sizeof *d->target);
     d->validation = validation ? validation : checked_calloc(1, sizeof *d->validation);
 
     ResolveJob *jobs = checked_calloc((size_t)threads, sizeof *jobs);
     pthread_t *ids = checked_calloc((size_t)threads, sizeof *ids);
     for (int t = 0; t < threads; t++) {
-        jobs[t] = (ResolveJob){ d, (const uint8_t (*)[DATA_RECORD_SIZE])records, resolve_with, threads, t, 0, 0, 0 };
+        jobs[t] = (ResolveJob){ .d = d, .records = (const uint8_t (*)[DATA_RECORD_SIZE])records,
+                                .weights = resolve_with, .begin = d->count * (size_t)t / (size_t)threads,
+                                .end = d->count * (size_t)(t + 1) / (size_t)threads };
         if (pthread_create(&ids[t], NULL, resolve_worker, &jobs[t]) != 0) {
             fprintf(stderr, "cannot start thread %d\n", t);
             exit(1);
         }
     }
-    size_t invalid = 0;
+    size_t invalid = 0, total = 0;
     for (int t = 0; t < threads; t++) {
         pthread_join(ids[t], NULL);
         invalid += jobs[t].invalid;
         d->unresolved += jobs[t].unresolved;
         d->resolve_nodes += jobs[t].nodes;
+        total += jobs[t].length;
     }
+
+    /* Join the jobs' features in position order. */
+    d->offset = checked_calloc(d->count + 1, sizeof *d->offset);
+    d->index = checked_calloc(total, sizeof *d->index);
+    d->value = checked_calloc(total, sizeof *d->value);
+    size_t at = 0;
+    for (int t = 0; t < threads; t++) {
+        ResolveJob *job = &jobs[t];
+        if (job->length) {
+            memcpy(d->index + at, job->index, job->length * sizeof *d->index);
+            memcpy(d->value + at, job->value, job->length * sizeof *d->value);
+        }
+        for (size_t i = job->begin; i < job->end; i++) {
+            d->offset[i] = at;
+            at += job->counts[i - job->begin];
+        }
+        free(job->index);
+        free(job->value);
+        free(job->counts);
+    }
+    d->offset[d->count] = at;
     free(jobs);
     free(ids);
     free(records);
@@ -159,15 +200,16 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every,
         if (d->validation[i])
             continue;
         d->train_count++;
-        for (int k = 0; k < d->feature_count[i]; k++)
-            d->seen[d->features[i][k] & ~FEATURE_NEGATIVE]++;
+        for (uint64_t k = d->offset[i]; k < d->offset[i + 1]; k++)
+            d->seen[d->index[k]]++;
     }
     return true;
 }
 
 void tune_free(TuneData *d) {
-    free(d->features);
-    free(d->feature_count);
+    free(d->offset);
+    free(d->index);
+    free(d->value);
     free(d->target);
     free(d->validation);
     memset(d, 0, sizeof *d);
@@ -200,13 +242,11 @@ static void *epoch_worker(void *arg) {
 
         size_t begin = d->count * (size_t)c / CHUNKS, end = d->count * (size_t)(c + 1) / CHUNKS;
         for (size_t i = begin; i < end; i++) {
-            const PackedFeature *f = d->features[i];
-            int n = d->feature_count[i];
+            uint64_t first = d->offset[i], last = d->offset[i + 1];
             double eval = 0;
-            for (int k = 0; k < n; k++) {
-                float weight = e->w[f[k] & ~FEATURE_NEGATIVE];
-                eval += (f[k] & FEATURE_NEGATIVE) ? -weight : weight;
-            }
+            for (uint64_t k = first; k < last; k++)
+                eval += d->value[k] * e->w[d->index[k]];
+            eval /= PHASE_MAX;
             double p = 1.0 / (1.0 + exp(-eval * SIGMOID_SCALE));
             double error = p - d->target[i];
             if (d->validation[i]) {
@@ -214,9 +254,9 @@ static void *epoch_worker(void *arg) {
                 continue;
             }
             train_loss += error * error;
-            double slope = 2.0 * error * p * (1.0 - p) * SIGMOID_SCALE;
-            for (int k = 0; k < n; k++)
-                grad[f[k] & ~FEATURE_NEGATIVE] += (f[k] & FEATURE_NEGATIVE) ? -slope : slope;
+            double slope = 2.0 * error * p * (1.0 - p) * SIGMOID_SCALE / PHASE_MAX;
+            for (uint64_t k = first; k < last; k++)
+                grad[d->index[k]] += slope * d->value[k];
         }
         e->train_loss[c] = train_loss;
         e->val_loss[c] = val_loss;

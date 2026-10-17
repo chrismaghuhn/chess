@@ -90,15 +90,17 @@ static void test_eval(void) {
             board_from_fen(&b, fens[i]);
             random_walk(&b, walk, &rng);
 
+            /* The engine's fast evaluation must equal the tuner's feature sum. */
             Feature features[MAX_ACTIVE_FEATURES];
             int n = features_extract(&b, features);
             int sum = 0;
             for (int k = 0; k < n; k++)
-                sum += features[k].sign * w.w[features[k].index];
-            CHECK(n == popcount(b.all), "one feature per piece");
-            CHECK(sum == eval_evaluate(&w, &b), "eval equals the feature sum");
-            CHECK(eval_from_psq(eval_psq(&w, &b), b.side) == eval_evaluate(&w, &b),
-                  "incremental sum equals the feature sum");
+                sum += features[k].value * w.w[features[k].index];
+            int expect = sum / PHASE_MAX;
+            expect = expect > EVAL_MAX ? EVAL_MAX : expect < -EVAL_MAX ? -EVAL_MAX : expect;
+            CHECK(n <= MAX_ACTIVE_FEATURES, "too many features");
+            CHECK(expect == eval_evaluate(&w, &b), "eval %d differs from the feature sum %d",
+                  eval_evaluate(&w, &b), expect);
 
             /* The search's incremental update must match a full recount after every legal move. */
             MoveList legal;
@@ -106,11 +108,12 @@ static void test_eval(void) {
             for (int k = 0; k < legal.count; k++) {
                 Board next;
                 board_make_move(&b, legal.moves[k], &next);
-                int want = eval_psq(&w, &next);
-                int got = eval_psq(&w, &b) + eval_psq_delta(&w, &b, legal.moves[k]);
+                Psq want = eval_psq(&w, &next);
+                Psq got = psq_add(eval_psq(&w, &b), eval_psq_delta(&w, &b, legal.moves[k]));
                 char move[6];
                 move_to_uci(legal.moves[k], move);
-                CHECK(want == got, "eval delta of %s: %d instead of %d", move, got, want);
+                CHECK(psq_equal(want, got), "eval delta of %s: %d/%d instead of %d/%d", move, got.mg,
+                      got.eg, want.mg, want.eg);
             }
             CHECK(eval_evaluate(&zero, &b) == 0, "zero weights give 0");
 
@@ -157,6 +160,41 @@ static void test_weight_files(const char *dir) {
 
     snprintf(bad, sizeof bad, "%s/does-not-exist.bin", dir);
     CHECK(!weights_load(bad, &loaded, err, sizeof err), "missing weight file accepted");
+
+    /*
+     * An old piece-square-only file (the first 384 of the same random weights,
+     * kept for the pinned self-play test) must evaluate exactly as the old
+     * engine did: the plain sum of piece-square weights.
+     */
+    char legacy[512];
+    snprintf(legacy, sizeof legacy, "%s/random-weights-v1.bin", dir);
+    file = fopen(legacy, "wb");
+    unsigned char header[12] = { 'S', 'C', 'H', 'W', 1, 0, 0, 0, LEGACY_FEATURE_COUNT & 255,
+                                 LEGACY_FEATURE_COUNT >> 8, 0, 0 };
+    fwrite(header, 1, sizeof header, file);
+    fwrite(f, sizeof f[0], LEGACY_FEATURE_COUNT, file); /* little-endian host */
+    fclose(file);
+    CHECK(weights_load(legacy, &loaded, err, sizeof err), "load legacy weights: %s", err);
+    uint64_t walk_rng = 77;
+    for (int i = 0; i < 300; i++) {
+        Board b;
+        board_from_fen(&b, fens[i % FEN_COUNT]);
+        random_walk(&b, i % 60, &walk_rng);
+        int old = 0;
+        for (int sq = 0; sq < 64; sq++) {
+            int piece = b.squares[sq];
+            if (piece == NO_PIECE)
+                continue;
+            int color = piece_color(piece);
+            int weight = w.w[piece_type(piece) * 64 + (color == WHITE ? sq : sq ^ 56)];
+            old += color == b.side ? weight : -weight;
+        }
+        old = old > EVAL_MAX ? EVAL_MAX : old < -EVAL_MAX ? -EVAL_MAX : old;
+        if (eval_evaluate(&loaded, &b) != old) {
+            CHECK(false, "legacy weights evaluate to %d instead of %d", eval_evaluate(&loaded, &b), old);
+            break;
+        }
+    }
 
     /* A good file with one thing broken at a time. */
     snprintf(bad, sizeof bad, "%s/bad-weights.bin", dir);

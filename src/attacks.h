@@ -17,6 +17,9 @@ typedef struct {
 extern Magic bishop_magics[64];
 extern Magic rook_magics[64];
 extern Bitboard between_bb[64][64]; /* squares strictly between two aligned squares, else 0 */
+extern Bitboard forward_file_bb[2][64];  /* [color][sq]: squares ahead of sq on its file */
+extern Bitboard passed_span_bb[2][64];   /* [color][sq]: ahead on its file and both neighbors */
+extern Bitboard adjacent_files_bb[8];    /* the files next to a file */
 
 void attacks_init(void);
 

@@ -11,6 +11,9 @@ Bitboard pawn_attacks[2][64];
 Magic bishop_magics[64];
 Magic rook_magics[64];
 Bitboard between_bb[64][64];
+Bitboard forward_file_bb[2][64];
+Bitboard passed_span_bb[2][64];
+Bitboard adjacent_files_bb[8];
 
 static Bitboard bishop_table[5248];
 static Bitboard rook_table[102400];
@@ -62,6 +65,22 @@ void attacks_init(void) {
     }
 
     init_magics();
+
+    /* Pawn geometry: squares ahead on the same file, and ahead on the same and adjacent files. */
+    for (int f = 0; f < 8; f++) {
+        Bitboard file_a = 0x0101010101010101ULL;
+        adjacent_files_bb[f] = (f > 0 ? file_a << (f - 1) : 0) | (f < 7 ? file_a << (f + 1) : 0);
+    }
+    for (int sq = 0; sq < 64; sq++) {
+        for (int color = 0; color < 2; color++) {
+            Bitboard ahead = 0;
+            for (int r = rank_of(sq) + (color == WHITE ? 1 : -1); r >= 0 && r < 8; r += color == WHITE ? 1 : -1)
+                ahead |= 0xFFULL << (8 * r);
+            Bitboard file = 0x0101010101010101ULL << file_of(sq);
+            forward_file_bb[color][sq] = ahead & file;
+            passed_span_bb[color][sq] = ahead & (file | adjacent_files_bb[file_of(sq)]);
+        }
+    }
 
     /* Squares strictly between two squares on a common line. */
     for (int a = 0; a < 64; a++) {

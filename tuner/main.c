@@ -54,24 +54,31 @@ static void usage(void) {
                     "             [--epochs N] [--lr X] [--threads N] [--val-every N] [--report N]\n");
 }
 
+/* Average weight of the features in [first, first + count) seen in training, one phase. */
+static double average_seen(const TuneData *d, const float *w, int first, int count) {
+    double sum = 0;
+    uint64_t used = 0;
+    for (int i = first; i < first + count; i++) {
+        if (d->seen[i]) {
+            sum += w[i];
+            used++;
+        }
+    }
+    return used ? sum / (double)used : 0;
+}
+
 /*
- * The average weight of each piece type over the squares it was seen on:
- * the piece values the tuner found, which nobody told it.
+ * The piece values the tuner found (average piece-square weight over both
+ * phases), which nobody told it, and the learned structure terms
+ * (middlegame/endgame).
  */
-static void print_piece_values(const TuneData *d, const float *w) {
+static void print_learned(const TuneData *d, const float *w) {
     static const char names[] = "PNBRQK";
     double values[6];
     printf("pieces");
     for (int type = 0; type < 6; type++) {
-        double sum = 0;
-        uint64_t squares = 0;
-        for (int sq = 0; sq < 64; sq++) {
-            if (d->seen[type * 64 + sq]) {
-                sum += w[type * 64 + sq];
-                squares++;
-            }
-        }
-        values[type] = squares ? sum / (double)squares : 0;
+        values[type] = (average_seen(d, w, F_PSQ + type * 64, 64)
+                        + average_seen(d, w, FEATURE_EG + F_PSQ + type * 64, 64)) / 2;
         printf(" %c=%.0f", names[type], values[type]);
     }
     if (values[PAWN] > 0) {
@@ -80,6 +87,11 @@ static void print_piece_values(const TuneData *d, const float *w) {
             printf(" %c=%.2f", names[type], values[type] / values[PAWN]);
         printf(")");
     }
+    printf("\nstructure doubled=%.0f/%.0f isolated=%.0f/%.0f bishop-pair=%.0f/%.0f passed(rank 2..7, eg)=",
+           w[F_DOUBLED], w[FEATURE_EG + F_DOUBLED], w[F_ISOLATED], w[FEATURE_EG + F_ISOLATED],
+           w[F_BISHOP_PAIR], w[FEATURE_EG + F_BISHOP_PAIR]);
+    for (int r = 0; r < 6; r++)
+        printf("%s%.0f", r ? "," : "", w[FEATURE_EG + F_PASSED + r]);
     printf("\n");
 }
 
@@ -155,7 +167,7 @@ int main(int argc, char **argv) {
 
     double cpu = clock_seconds(CLOCK_PROCESS_CPUTIME_ID) - cpu_start;
     double wall = clock_seconds(CLOCK_MONOTONIC) - wall_start;
-    print_piece_values(&d, w);
+    print_learned(&d, w);
     printf("summary positions=%zu train=%zu validation=%zu start_train_loss=%.6f start_val_loss=%.6f"
            " train_loss=%.6f val_loss=%.6f best_epoch=%d epochs=%d unresolved=%zu quiet_nodes=%" PRIu64
            " cpu_s=%.3f wall_s=%.3f\n",
