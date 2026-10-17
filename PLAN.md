@@ -194,6 +194,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 6 | Reichere Bewertung (Experiment) | verworfen, siehe unten: kostet mehr Tempo, als es Elo bringt |
 | 7 | Knotenzahl pro Zug | welche Knotenzahl ergibt die meiste Stärke pro CPU-Sekunde Training |
 | 8 | Absolute Elo | Matches gegen Stockfish mit gedrosselter Stärke (nur Messung) |
+| 9 | NNUE (Experiment) | Offline-Test: schlägt ein kleines Netz das lineare Modell auf denselben eigenen Daten? |
 
 ### Meilenstein 5: Tempo
 
@@ -350,6 +351,54 @@ Lauf 7 Gen 12 (stärkste Gewichte, ~48 CPU-Minuten Training), PVS+NMP+LMR, beide
   auseinander. Ehrlicher ist daher **1900 ± 100**, und nur für diese Bedenkzeit.
 - Einordnung: unter Engines eher schwach (Spitze > 3500), etwa im Bereich einfacher Lehr-Engines mit
   handgeschriebener Bewertung – erreicht ohne jedes Schachwissen in ~3 Minuten Wandzeit Training.
+
+### Meilenstein 9: kleines NNUE (Offline-Test, Entwurf – nach Review überarbeitet)
+
+Ziel: billig klären, ob ein kleines Netz auf unseren eigenen Daten das lineare Modell schlägt, bevor es in die
+Trainingsschleife kommt (und bevor ein großer Lauf, z. B. auf AWS, sich lohnt). Lehre aus Meilenstein 6: Das Label
+gehört zur Partie; 918 Gewichte waren für 2000 Partien zu viele.
+
+**Daten:** alle eigenen Läufe ohne bitgleiche Dateien (Lauf 4 = Lauf 1; Lauf 5 Gen 0 = Lauf 1 Gen 0):
+65 Dateien, 130.000 Partien, ~14,1 Mio. Stellungen. Achtung: Alle Läufe nutzen pro Generation denselben Seed, also
+dieselben Eröffnungen – nur ~32.000 verschiedene Eröffnungen; die effektive Stichprobe liegt zwischen 32k und 130k.
+Aufteilung nach der Partienummer *innerhalb jeder Datei*: Test = Nummer % 10 == 0 (nur für den Bericht),
+Validierung = % 10 == 5 (Early Stopping), Rest Training. Damit landen gleiche Eröffnungen aller Läufe immer im
+selben Teil. Auflösung zur ruhigen Stellung mit den linearen Gewichten von Lauf 7 Gen 12 für beide Modelle.
+
+**Netz** (`src/nnue.[ch]`): Bewertung = linearer Figur-Feld-Teil (768, Start: Lauf 7 Gen 12) + Netz. Das Netz lernt
+nur den Rest, kann also nicht schlechter als linear starten, und der lineare Teil liefert weiter die gelernten
+Figurenwerte für die Zugsortierung. Netz: 768 Eingänge pro Perspektive (eigene/gegnerische Figur × Typ × Feld, für
+Schwarz gespiegelt), geteilte erste Schicht, H = 32/64 pro Perspektive, Clipped ReLU auf [0, 1],
+Ausgang `400 · (w2 · [h_am_Zug, h_Gegner] + b2)`. Init: b1 = 0,5, w1 ~ U(±0,05), w2 ~ ±1/√(2H), b2 = 0.
+Gewichte während des Trainings auf die späteren Quantisierungsgrenzen begrenzt.
+
+**Training** (`tuner/nnue_train.c`, CPU, C): Verlust wie Texel. Mini-Batch-Adam (Batch 16384, lr ~1e-3 mit Abfall),
+Weight Decay auf w1, Gradienten in festen Blöcken summiert (bitgleich für jede Thread-Anzahl), Reihenfolge und
+Initialisierung mit festem Seed, Validierung jede halbe Epoche, Anteil toter/gesättigter Neuronen im Log,
+CPU-Zeit wird gemessen und berichtet. Prüfungen: Gradiententest (finite Differenzen), Trainer-Vorwärtsrechnung
+= `nnue_evaluate`, Farbtausch-Symmetrie, Überanpassen von 1000 Stellungen gelingt.
+
+**Lernkurve:** linear und Netz jeweils auf 2k / 8k / 32k / 130k Partien – zeigt, ab welcher Datenmenge das Netz
+gewinnt, also ob und wann es in der Trainingsschleife (2000 Partien pro Generation) trägt.
+
+**Vergleich in der Engine:** eine einzige Bewertungsstelle für alle Aufrufe (Blätter, Stand-Pat, Null-Move-Bedingung).
+Matches pro Seite mit Netz oder ohne, je 2000 Partien: bei 5000 Knoten mit `all` und bei 1500 Knoten mit `exact`
+(Trainingsbedingung). Das Netz wird zum Testen an jedem Blatt neu gerechnet (misst nur Qualität). Tempo: Prototyp
+eines inkrementellen Float-Akkumulators im Copy-Make, gemessen per `bench`.
+
+**Go/Stop-Regel (vorab festgelegt):** Weiter nur, wenn das beste Netz bei gleichen Knoten mehr Elo bringt als sein
+Tempoverlust kostet – ~150 · log2(Verlangsamung), z. B. +60 Elo bei 1,3× langsamer – mit dem 95-%-Intervall
+oberhalb dieser Schwelle. Sonst Stopp und dokumentieren.
+
+**Danach (falls es trägt):** Generationsschleife mit Netz und **Gate**: Eine neue Generation übernimmt die
+Selbstpartien nur, wenn sie die aktuelle im sequentiellen Test besteht (Partiepaare, pentanomial, SPRT elo0 = 0,
+elo1 = +25…30, α = β = 0,1, abgebrochen nach ~800 Partien); sonst bleibt das alte Netz, die neuen Daten werden
+trotzdem verwendet. Die CPU-Zeit des Gates zählt zum Trainingsaufwand; die ehrliche Kurve kommt weiter aus den
+Anker-Matches (das Gate selbst überschätzt die Fortschritte).
+
+**Option für später:** Selbstpartien speichern zusätzlich die eigene Suchbewertung jeder Stellung (Datenformat v2)
+und trainieren auf einer Mischung aus Bewertung und Ergebnis – ein Label pro Stellung statt pro Partie, deutlich
+dateneffizienter (erlaubt, weil es unsere eigenen Daten sind).
 
 ## Ergebnisse
 
