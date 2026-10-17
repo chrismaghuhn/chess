@@ -196,6 +196,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 8 | Absolute Elo | Matches gegen Stockfish mit gedrosselter Stärke (nur Messung) |
 | 9 | NNUE (Experiment) | gestoppt: bessere Loss, aber schwächeres Spiel; Nebenbefund: lineares Modell auf allen Daten +97 Elo |
 | 10 | Daten v2: Suchbewertung als Label, kalibrierte Aufgabe | kein Gewinn (λ schadet, Aufgabe ~0); Entdeckung: Tuning ist >50 % der CPU |
+| 11 | Schnelleres Tuning | −37 % CPU bei gleicher Stärke (Geduld + Leaf-Cache) |
 
 ### Meilenstein 5: Tempo
 
@@ -450,6 +451,37 @@ dateneffizienter (erlaubt, weil es unsere eigenen Daten sind).
   zwischenspeichern und nur neue Daten auflösen).
 - Grafik: `runs/v2-comparison.svg`. Format und Optionen bleiben (Standard aus); die gespeicherten Bewertungen werden
   nützlich, falls Labels später aus tieferer Suche kommen.
+
+### Meilenstein 11: schnelleres Tuning
+
+Seit 1500 Knoten pro Zug kostete das Tuning mehr als die Selbstpartien (53–59 %): Jede Generation löste alle bisherigen
+Stellungen neu zu ruhigen Stellungen auf und trainierte fest 400 Epochen.
+
+- **Geduld** (`tuner --patience N`): Schluss nach N Epochen ohne bessere Validierungs-Loss (in der Schleife N = 30).
+- **Leaf-Cache** (`tuner --leaf-cache on`): Die ruhigen Stellungen jeder Datendatei werden einmal berechnet und als
+  `FILE.leaves` daneben gelegt (geprüft per Hash über die Records). Eine Datei wird mit den Gewichten der ersten
+  Tuning-Runde aufgelöst, die sie liest – bei Selbstspieldaten die Generation, die sie gespielt hat; ältere Daten
+  behalten also etwas ältere Auflösungen.
+- `generations.sh`: `TUNER_FAST` (jetzt Standard `on`; vor M11 begonnene Läufe mit `TUNER_FAST=off` fortsetzen).
+
+| (12 Gen., 1500 Knoten) | Selbstpartien | Tuning | gesamt | Anker-Elo Gen 12 |
+|---|---|---|---|---|
+| Lauf 7 | 1344 s | 1525 s | 2869 s | −7 ± 20 |
+| Lauf 12 (`TUNER_FAST=on`, vor dem Review) | 1463 s | 229 s | 1692 s | −23 ± 20 |
+| **Lauf 13** (`TUNER_FAST=on`, nach dem Review) | 1408 s | **391 s** | **1799 s** | −22 ± 21 |
+
+- Tuning −74 %, gesamt **−37 %** bei gleicher Stärke im Rahmen der Messgenauigkeit; bei gleicher CPU (~1800 s) liegt
+  Lauf 13 rund 80 Elo vor Lauf 7 (`runs/tuning-comparison.svg`).
+- Der Review fand in Lauf 12 einen Fehler: Tune 1 hat Gen-0-Daten mit Null-Gewichten „aufgelöst“ (die finden keine
+  ruhigen Stellungen, fast jede Stellung blieb wie sie war) und das gecacht – diese Daten (anfangs 62 %) wurden nie
+  richtig aufgelöst. Seitdem werden Leaves von Null-Gewichten nicht gecacht; Gen 1 löst die Gen-0-Daten in Tune 2
+  einmal auf (~200 CPU-s, die Zufallspartien von Gen 0 haben viele Schlagfolgen). Lauf 13 misst den korrigierten
+  Stand: gleich stark wie Lauf 12, ~110 CPU-s teurer – der Fehler hat also nicht messbar geschadet.
+- Seit Lauf 1: etwa dieselbe Stärke mit ~1800 statt 4824 CPU-s – gut ein Drittel.
+- Nebenwirkung: Findet das Tuning in 30 Epochen nichts Besseres, bleibt die Generation unverändert (Gen 8 = Gen 7
+  in Lauf 12) – das wirkt wie ein eingebautes Gate.
+- Der Leaf-Cache (`FILE.leaves`, Version 2) trägt eine Prüfsumme und das Knotenlimit der Auflösung; beschädigte oder
+  veraltete Caches werden neu berechnet.
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 

@@ -71,9 +71,9 @@ esac
 
 # Calibrated resignation: same data for any thread count, labels consistent, threshold reported.
 r1=$(timeout 120 "$engine" selfplay --games 40 --nodes 300 --threads 1 --seed 9 --resign on \
-    --weights "$tmp/random-weights-v1.bin" --out "$tmp/resign1.bin" 2>/dev/null) || fail "self-play with resignation"
+    --weights "$tmp/random-weights.bin" --out "$tmp/resign1.bin" 2>/dev/null) || fail "self-play with resignation"
 timeout 120 "$engine" selfplay --games 40 --nodes 300 --threads 3 --seed 9 --resign on \
-    --weights "$tmp/random-weights-v1.bin" --out "$tmp/resign3.bin" >/dev/null 2>&1 || fail "resignation, 3 threads"
+    --weights "$tmp/random-weights.bin" --out "$tmp/resign3.bin" >/dev/null 2>&1 || fail "resignation, 3 threads"
 cmp -s "$tmp/resign1.bin" "$tmp/resign3.bin" || fail "resignation depends on the thread count"
 printf '%s\n' "$r1" | grep -q "resign_threshold=" || fail "no resignation report: $r1"
 case "$("$engine" data-info "$tmp/resign1.bin" 0)" in

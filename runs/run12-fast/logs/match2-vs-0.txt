@@ -1,0 +1,2 @@
+runs/run12-fast/weights/gen2.bin vs zero: +396 =1 -3, score 99.1%, Elo +822 +/- 231
+summary games=400 a_wins=396 draws=1 b_wins=3 score=0.9912 elo=821.7 elo_err=230.9 saturated=0 cpu_s=9.209 wall_s=0.927

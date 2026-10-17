@@ -1,0 +1,2 @@
+runs/run13-fast/weights/gen5.bin vs runs/run4/weights/gen8.bin: +144 =47 -809, score 16.8%, Elo -279 +/- 28
+summary games=1000 a_wins=144 draws=47 b_wins=809 score=0.1675 elo=-278.5 elo_err=27.7 saturated=0 cpu_s=184.462 wall_s=12.350

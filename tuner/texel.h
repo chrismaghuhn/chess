@@ -29,6 +29,8 @@ typedef struct {
     size_t scored;                /* positions whose target includes a search score */
     double lambda;
     uint64_t resolve_nodes;       /* quiescence nodes spent finding quiet leaves */
+    size_t cached;                /* positions whose quiet leaves came from a .leaves cache */
+    bool *needs_resolving;        /* during loading only */
 } TuneData;
 
 /*
@@ -40,9 +42,19 @@ typedef struct {
  *   target = lambda * sigmoid(score) + (1 - lambda) * result,
  * and uses the score alone for games cut at the ply limit, whose "draw" is
  * not a real result. lambda = 0 trains on results only, as before.
+ *
+ * With leaf_cache, the quiet leaves of each data file are stored next to it
+ * (FILE.leaves, checked against a hash of the file's records) and reused by
+ * later runs instead of being resolved again. A file is resolved once, with
+ * the weights of the first tuning that reads it – for self-play data that
+ * is the generation that played it – so older data keeps somewhat older
+ * leaves; that is the price for not redoing the work every generation.
+ * A cache is reused whatever weights are given now. Leaves resolved with
+ * all-zero weights are not cached (those weights find no quiet leaves), so
+ * generation 0's data is resolved by generation 1.
  */
 bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, double lambda,
-               const Weights *resolve_with, int threads, char *err, size_t err_size);
+               bool leaf_cache, const Weights *resolve_with, int threads, char *err, size_t err_size);
 void tune_free(TuneData *d);
 
 typedef struct {
@@ -50,12 +62,14 @@ typedef struct {
     double learning_rate;
     int threads;
     int report_every; /* print losses to stderr every n epochs; 0 = never */
+    int patience;     /* stop after this many epochs without a better validation loss; 0 = never */
 } TuneConfig;
 
 typedef struct {
     double start_train_loss, start_val_loss;
     double train_loss, val_loss; /* at the best epoch */
     int best_epoch;              /* by validation loss, or the last one without validation */
+    int epochs_run;
 } TuneResult;
 
 /* Full-batch Adam on w (updated in place). Deterministic for any thread count. */

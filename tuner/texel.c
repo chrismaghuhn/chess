@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "datafmt.h"
 #include "search.h"
@@ -35,7 +36,7 @@ typedef struct {
     const uint8_t (*records)[DATA_RECORD_SIZE];
     const Weights *weights;
     int threads, id;
-    size_t invalid, unresolved, scored;
+    size_t invalid, unresolved;
     uint64_t nodes;
 } ResolveJob;
 
@@ -50,6 +51,8 @@ static void *resolve_worker(void *arg) {
     search_set_weights(s, job->weights);
 
     for (size_t i = (size_t)job->id; i < d->count; i += (size_t)job->threads) {
+        if (!d->needs_resolving[i])
+            continue;
         DataPosition pos;
         if (!data_unpack(job->records[i], &pos)) {
             job->invalid++;
@@ -71,22 +74,138 @@ static void *resolve_worker(void *arg) {
             d->features[i][k] = (PackedFeature)(f[k].index | (negative ? FEATURE_NEGATIVE : 0));
         }
         d->feature_count[i] = (uint8_t)n;
-        double target = pos.result / 2.0;
-        if (pos.score_valid) {
-            job->scored++;
-            double expected = 1.0 / (1.0 + exp(-pos.score * SIGMOID_SCALE));
-            target = pos.end == END_PLY_LIMIT ? expected : d->lambda * expected + (1 - d->lambda) * target;
-        }
-        d->target[i] = (float)target;
     }
     search_free(s);
     return NULL;
 }
 
+/* ---- Leaf cache ---- */
+
+/*
+ * FILE.leaves: "SCHL", version, FEATURE_COUNT, QUIET_MAX_NODES (uint32 each),
+ * position count and FNV-1a hash of the data file's records (uint64 each),
+ * then per position the feature count (uint8) and that many packed features
+ * (uint16), and an FNV-1a hash of everything before it (uint64); all little-
+ * endian. Bump the version whenever features or search_quiet change meaning.
+ */
+static const char leaves_magic[4] = { 'S', 'C', 'H', 'L' };
+#define LEAVES_VERSION 2
+#define LEAVES_HEADER_SIZE 32
+#define FNV_OFFSET 0xCBF29CE484222325ULL
+
+static uint64_t fnv1a(uint64_t h, const uint8_t *p, size_t n) {
+    for (size_t i = 0; i < n; i++)
+        h = (h ^ p[i]) * 0x100000001B3ULL;
+    return h;
+}
+
+static void put_le(uint8_t *p, uint64_t v, int bytes) {
+    for (int i = 0; i < bytes; i++)
+        p[i] = (uint8_t)(v >> (8 * i));
+}
+
+static uint64_t get_le(const uint8_t *p, int bytes) {
+    uint64_t v = 0;
+    for (int i = 0; i < bytes; i++)
+        v |= (uint64_t)p[i] << (8 * i);
+    return v;
+}
+
+static bool leaves_name(char *name, size_t size, const char *path) {
+    int n = snprintf(name, size, "%s.leaves", path);
+    return n > 0 && (size_t)n < size;
+}
+
+/* Loads the cached leaves of positions [first, first + count); false if missing, stale or damaged. */
+static bool load_leaves(TuneData *d, const char *path, size_t first, size_t count, uint64_t hash) {
+    char name[4096];
+    if (!leaves_name(name, sizeof name, path))
+        return false;
+    FILE *f = fopen(name, "rb");
+    if (!f)
+        return false;
+    long size = fseek(f, 0, SEEK_END) == 0 ? ftell(f) : -1;
+    size_t max_size = LEAVES_HEADER_SIZE + count * (1 + 2 * MAX_ACTIVE_FEATURES) + 8;
+    if (size < LEAVES_HEADER_SIZE + 8 || (size_t)size > max_size || fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return false;
+    }
+    uint8_t *buf = checked_calloc((size_t)size, 1);
+    bool ok = fread(buf, 1, (size_t)size, f) == (size_t)size;
+    fclose(f);
+
+    size_t payload_end = (size_t)size - 8;
+    ok = ok && memcmp(buf, leaves_magic, 4) == 0 && get_le(buf + 4, 4) == LEAVES_VERSION
+      && get_le(buf + 8, 4) == FEATURE_COUNT && get_le(buf + 12, 4) == QUIET_MAX_NODES
+      && get_le(buf + 16, 8) == count && get_le(buf + 24, 8) == hash
+      && get_le(buf + payload_end, 8) == fnv1a(FNV_OFFSET, buf, payload_end);
+    size_t at = LEAVES_HEADER_SIZE;
+    for (size_t i = first; ok && i < first + count; i++) {
+        int k = at < payload_end ? buf[at++] : -1;
+        ok = k >= 0 && k <= MAX_ACTIVE_FEATURES && at + 2 * (size_t)k <= payload_end;
+        for (int j = 0; ok && j < k; j++, at += 2) {
+            PackedFeature packed = (PackedFeature)get_le(buf + at, 2);
+            ok = (packed & ~FEATURE_NEGATIVE) < FEATURE_COUNT;
+            d->features[i][j] = packed;
+        }
+        d->feature_count[i] = ok ? (uint8_t)k : 0;
+    }
+    ok = ok && at == payload_end;
+    free(buf);
+    return ok;
+}
+
+/* Writes the leaves of positions [first, first + count) next to the data file (atomically). */
+static void save_leaves(const TuneData *d, const char *path, size_t first, size_t count, uint64_t hash) {
+    char name[4096], part[4200];
+    if (!leaves_name(name, sizeof name, path)) {
+        fprintf(stderr, "warning: path too long for a leaf cache: %s\n", path);
+        return;
+    }
+    snprintf(part, sizeof part, "%s.%ld.part", name, (long)getpid());
+
+    size_t size = LEAVES_HEADER_SIZE + 8;
+    for (size_t i = first; i < first + count; i++)
+        size += 1 + 2 * (size_t)d->feature_count[i];
+    uint8_t *buf = checked_calloc(size, 1);
+    memcpy(buf, leaves_magic, 4);
+    put_le(buf + 4, LEAVES_VERSION, 4);
+    put_le(buf + 8, FEATURE_COUNT, 4);
+    put_le(buf + 12, QUIET_MAX_NODES, 4);
+    put_le(buf + 16, count, 8);
+    put_le(buf + 24, hash, 8);
+    size_t at = LEAVES_HEADER_SIZE;
+    for (size_t i = first; i < first + count; i++) {
+        buf[at++] = d->feature_count[i];
+        for (int j = 0; j < d->feature_count[i]; j++, at += 2)
+            put_le(buf + at, d->features[i][j], 2);
+    }
+    put_le(buf + at, fnv1a(FNV_OFFSET, buf, at), 8);
+
+    FILE *f = fopen(part, "wb");
+    bool ok = f && fwrite(buf, 1, size, f) == size;
+    ok = (f && fclose(f) == 0) && ok && rename(part, name) == 0;
+    if (!ok) {
+        remove(part);
+        fprintf(stderr, "warning: cannot write leaf cache %s\n", name);
+    }
+    free(buf);
+}
+
+static bool all_zero(const Weights *w) {
+    for (int i = 0; i < FEATURE_COUNT; i++)
+        if (w->w[i])
+            return false;
+    return true;
+}
+
 bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, double lambda,
-               const Weights *resolve_with, int threads, char *err, size_t err_size) {
+               bool leaf_cache, const Weights *resolve_with, int threads, char *err, size_t err_size) {
     memset(d, 0, sizeof *d);
     d->lambda = lambda;
+    size_t *file_first = checked_calloc((size_t)path_count, sizeof *file_first);
+    size_t *file_count = checked_calloc((size_t)path_count, sizeof *file_count);
+    uint64_t *file_hash = checked_calloc((size_t)path_count, sizeof *file_hash);
 
     /* Read all records, marking validation games on the way. */
     size_t capacity = 0;
@@ -101,6 +220,9 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, d
         if (!f) {
             free(records);
             free(validation);
+            free(file_first);
+            free(file_count);
+            free(file_hash);
             return false;
         }
         if (d->count + count > capacity) {
@@ -113,6 +235,9 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, d
             }
         }
         int prev_ply = -2;
+        file_first[p] = d->count;
+        file_count[p] = count;
+        file_hash[p] = FNV_OFFSET;
         for (uint64_t i = 0; i < count; i++) {
             uint8_t *r = records[d->count];
             if (!data_read(f, record_size, r)) {
@@ -120,6 +245,9 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, d
                 fclose(f);
                 free(records);
                 free(validation);
+                free(file_first);
+                free(file_count);
+                free(file_hash);
                 return false;
             }
             int ply = r[30] | r[31] << 8;
@@ -127,6 +255,7 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, d
                 game++; /* a new game starts wherever the ply does not go up by one */
             prev_ply = ply;
             validation[d->count] = val_every > 0 && game % (uint64_t)val_every == 0;
+            file_hash[p] = fnv1a(file_hash[p], r, DATA_RECORD_SIZE);
             d->count++;
         }
         fclose(f);
@@ -137,10 +266,35 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, d
     d->target = checked_calloc(d->count, sizeof *d->target);
     d->validation = validation ? validation : checked_calloc(1, sizeof *d->validation);
 
+    /* Targets come straight from the records (see tune_load in texel.h). */
+    for (size_t i = 0; i < d->count; i++) {
+        const uint8_t *r = records[i];
+        double target = r[28] / 2.0;
+        if (r[34] == 1) {
+            d->scored++;
+            int score = (int16_t)(r[32] | r[33] << 8);
+            double expected = 1.0 / (1.0 + exp(-score * SIGMOID_SCALE));
+            target = r[29] == END_PLY_LIMIT ? expected : d->lambda * expected + (1 - d->lambda) * target;
+        }
+        d->target[i] = (float)target;
+    }
+
+    /* Leaves from caches where they are valid; everything else gets resolved. */
+    d->needs_resolving = checked_calloc(d->count, sizeof *d->needs_resolving);
+    bool *cached_file = checked_calloc((size_t)path_count, sizeof *cached_file);
+    for (int p = 0; p < path_count; p++) {
+        cached_file[p] = leaf_cache && load_leaves(d, paths[p], file_first[p], file_count[p], file_hash[p]);
+        if (cached_file[p])
+            d->cached += file_count[p];
+        else
+            for (size_t i = file_first[p]; i < file_first[p] + file_count[p]; i++)
+                d->needs_resolving[i] = true;
+    }
+
     ResolveJob *jobs = checked_calloc((size_t)threads, sizeof *jobs);
     pthread_t *ids = checked_calloc((size_t)threads, sizeof *ids);
     for (int t = 0; t < threads; t++) {
-        jobs[t] = (ResolveJob){ d, (const uint8_t (*)[DATA_RECORD_SIZE])records, resolve_with, threads, t, 0, 0, 0, 0 };
+        jobs[t] = (ResolveJob){ d, (const uint8_t (*)[DATA_RECORD_SIZE])records, resolve_with, threads, t, 0, 0, 0 };
         if (pthread_create(&ids[t], NULL, resolve_worker, &jobs[t]) != 0) {
             fprintf(stderr, "cannot start thread %d\n", t);
             exit(1);
@@ -151,12 +305,22 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, d
         pthread_join(ids[t], NULL);
         invalid += jobs[t].invalid;
         d->unresolved += jobs[t].unresolved;
-        d->scored += jobs[t].scored;
         d->resolve_nodes += jobs[t].nodes;
     }
     free(jobs);
     free(ids);
     free(records);
+    /* Zero weights find no quiet leaves (every position stands pat), so such leaves are not kept. */
+    if (leaf_cache && !invalid && !all_zero(resolve_with))
+        for (int p = 0; p < path_count; p++)
+            if (!cached_file[p])
+                save_leaves(d, paths[p], file_first[p], file_count[p], file_hash[p]);
+    free(cached_file);
+    free(file_first);
+    free(file_count);
+    free(file_hash);
+    free(d->needs_resolving);
+    d->needs_resolving = NULL;
 
     if (invalid) {
         snprintf(err, err_size, "%zu invalid records", invalid);
@@ -282,6 +446,7 @@ TuneResult tune_run(const TuneData *d, float w[FEATURE_COUNT], const TuneConfig 
     r.train_loss = r.start_train_loss;
     r.val_loss = r.start_val_loss;
     r.best_epoch = 0;
+    r.epochs_run = 0;
 
     for (int epoch = 1; epoch <= config->epochs; epoch++) {
         /* grad holds the gradient at the current weights from the last evaluation. */
@@ -306,6 +471,9 @@ TuneResult tune_run(const TuneData *d, float w[FEATURE_COUNT], const TuneConfig 
         if (config->report_every && (epoch % config->report_every == 0 || epoch == config->epochs))
             fprintf(stderr, "epoch %4d  train %.6f  validation %.6f%s\n", epoch, train_loss, val_loss,
                     better ? "  *" : "");
+        r.epochs_run = epoch;
+        if (config->patience && has_validation && epoch - r.best_epoch >= config->patience)
+            break; /* no better validation loss for a while: further epochs would be wasted */
     }
 
     memcpy(w, best, sizeof best);
