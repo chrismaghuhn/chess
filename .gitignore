@@ -1,8 +1,3 @@
 build/
 data/
-*.o
-*.d
-/engine/engine
-/tuner/tuner
-/tests/perft
 __pycache__/

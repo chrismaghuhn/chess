@@ -36,6 +36,7 @@ src/      gemeinsame Bibliothek (Engine und Tuner)
           board.[ch]     Bitboards, Copy-Make, FEN
           attacks.[ch]   Angriffstabellen (erst einfache Schleifen, später Magic Bitboards)
           movegen.[ch]   pseudo-legale Züge + Legalitätscheck
+          perft.[ch]     Perft und Divide (auch für UCI `go perft` später)
           zobrist.[ch]   Hashing für TT und Stellungswiederholung
           features.[ch]  Stellung → Merkmalsindizes (EIN Code für Engine und Tuner)
           eval.[ch]      lineare Bewertung, lädt Gewichtsdatei
@@ -54,8 +55,12 @@ log/      generations.csv
 
 - C11, gcc oder clang, einfaches `Makefile`
 - `make` baut mit `-O2 -march=native`
-- `make debug` baut mit `-O0 -g -fsanitize=address,undefined`
-- `make test` führt die Perft-Suite aus
+- `make debug` baut mit `-O0 -g -fsanitize=address,undefined`; Debug-Builds prüfen
+  zusätzlich an jedem Perft-Knoten, ob Bitboards, Mailbox und Hash zusammenpassen
+- `make test` führt die Perft-Suite aus (bis 25 Mio. Knoten, ~2 s);
+  `make test-full` alles (~1,5 Mrd. Knoten, ~40 s); `make test-debug` die kleine Suite mit Sanitizern
+- `build/release/perft divide <tiefe> <fen|startpos>` zum Eingrenzen von Perft-Fehlern
+- Ausgaben landen in `build/`
 
 ## Design-Entscheidungen
 

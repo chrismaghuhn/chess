@@ -1,0 +1,59 @@
+#ifndef BOARD_H
+#define BOARD_H
+
+#include <stddef.h>
+#include <stdio.h>
+
+#include "bitboard.h"
+
+#define START_FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+#define FEN_MAX 100
+
+typedef struct {
+    Bitboard pieces[2][6]; /* [color][type] */
+    Bitboard occupied[2];  /* [color] */
+    Bitboard all;
+    uint64_t hash;
+    uint8_t squares[64];   /* piece on each square, or NO_PIECE */
+    uint8_t side;          /* side to move */
+    uint8_t castling;      /* WHITE_OO | WHITE_OOO | BLACK_OO | BLACK_OOO */
+    uint8_t ep;            /* en passant target square, or SQ_NONE */
+    uint16_t halfmove;     /* plies since the last capture or pawn move */
+    uint16_t fullmove;
+} Board;
+
+/* Must be called once before anything else. */
+void chess_init(void);
+
+/*
+ * Parses a FEN; the move counters are optional. Rejects malformed and
+ * illegal positions. Castling rights without king and rook on their home
+ * squares are dropped, and so is an en passant square no pawn can capture on.
+ */
+bool board_from_fen(Board *b, const char *fen);
+void board_to_fen(const Board *b, char *buf, size_t size);
+
+/*
+ * Plays a pseudo-legal move on a copy of b. Returns false if the move
+ * leaves the mover's king in check; out is then garbage.
+ */
+bool board_make_move(const Board *b, Move m, Board *out);
+
+bool board_square_attacked(const Board *b, int sq, int by_color);
+
+static inline int board_king_square(const Board *b, int color) {
+    return lsb(b->pieces[color][KING]);
+}
+
+static inline bool board_in_check(const Board *b) {
+    return board_square_attacked(b, board_king_square(b, b->side), b->side ^ 1);
+}
+
+uint64_t board_compute_hash(const Board *b);
+
+/* Checks that bitboards, mailbox and hash agree. For debug builds and tests. */
+bool board_is_consistent(const Board *b);
+
+void board_print(const Board *b, FILE *out);
+
+#endif
