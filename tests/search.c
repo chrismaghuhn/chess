@@ -197,6 +197,16 @@ static void test_quiet_leaf(void) {
     search_quiet(search, &b, 0, &leaf, &score, NULL);
     CHECK(leaf.hash == b.hash && score == -900, "nothing to take: stand pat (score %d)", score);
 
+    /* Mated at the root: nothing to play, the leaf is the root, the score a mate. */
+    board_from_fen(&b, "7k/6Q1/6K1/8/8/8/8/8 b - - 0 1");
+    search_quiet(search, &b, 0, &leaf, &score, NULL);
+    CHECK(leaf.hash == b.hash && score == -SCORE_MATE, "mated root (score %d)", score);
+
+    /* In check at the root: an evasion is played. */
+    board_from_fen(&b, "4k3/8/8/8/8/8/3q4/4K3 w - - 0 1");
+    bool done = search_quiet(search, &b, 0, &leaf, &score, NULL);
+    CHECK(done && !leaf.pieces[BLACK][QUEEN] && leaf.side == BLACK, "king takes the checking queen");
+
     /* A node limit that is too small gives up and leaves the position as it is. */
     board_from_fen(&b, "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
     CHECK(!search_quiet(search, &b, 3, &leaf, &score, NULL) && leaf.hash == b.hash,

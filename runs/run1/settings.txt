@@ -1,0 +1,1 @@
+games=2000 nodes=5000 match_games=400 epochs=400

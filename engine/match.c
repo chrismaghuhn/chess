@@ -126,21 +126,30 @@ static double elo_from_score(double score) {
     return -400.0 * log10(1.0 / score - 1.0);
 }
 
+static double clamp_d(double v, double low, double high) {
+    return v < low ? low : v > high ? high : v;
+}
+
 /*
  * Elo difference with a 95% interval from the per-game score variance.
- * Scores of 0 or 1 are pulled in by half a game so the estimate stays finite.
+ * A one-sided match (every game won, or every game lost) has no variance
+ * and an infinite Elo; it is pulled in by half a game and given a binomial
+ * spread, so both numbers stay finite. Such a result only shows a bound,
+ * which *saturated reports.
  */
-static void elo_estimate(int wins, int draws, int losses, double *elo, double *error) {
+static void elo_estimate(int wins, int draws, int losses, double *elo, double *error, bool *saturated) {
     double n = wins + draws + losses;
     double score = (wins + 0.5 * draws) / n;
+    double floor = 0.5 / n, ceiling = 1 - 0.5 / n;
+    double p = clamp_d(score, floor, ceiling);
     double variance = (wins * (1 - score) * (1 - score) + draws * (0.5 - score) * (0.5 - score)
                        + losses * score * score) / n;
+    *saturated = wins == n || losses == n;
+    if (*saturated)
+        variance = p * (1 - p);
     double margin = 1.96 * sqrt(variance / n);
-    double floor = 0.5 / n, ceiling = 1 - 0.5 / n;
-    double clamp = score < floor ? floor : score > ceiling ? ceiling : score;
-    double low = score - margin < floor ? floor : score - margin;
-    double high = score + margin > ceiling ? ceiling : score + margin;
-    *elo = elo_from_score(clamp);
+    double low = clamp_d(p - margin, floor, ceiling), high = clamp_d(p + margin, floor, ceiling);
+    *elo = elo_from_score(p);
     *error = (elo_from_score(high) - elo_from_score(low)) / 2;
 }
 
@@ -234,8 +243,12 @@ int match_main(int argc, char **argv) {
     double cpu_start = clock_seconds(CLOCK_PROCESS_CPUTIME_ID);
     double wall_start = clock_seconds(CLOCK_MONOTONIC);
     pthread_t *threads = calloc((size_t)c.threads, sizeof *threads);
-    for (int t = 0; t < c.threads; t++)
-        pthread_create(&threads[t], NULL, worker, m);
+    for (int t = 0; t < c.threads; t++) {
+        if (pthread_create(&threads[t], NULL, worker, m) != 0) {
+            fprintf(stderr, "cannot start thread %d\n", t);
+            exit(1);
+        }
+    }
     for (int t = 0; t < c.threads; t++)
         pthread_join(threads[t], NULL);
     double cpu = clock_seconds(CLOCK_PROCESS_CPUTIME_ID) - cpu_start;
@@ -243,12 +256,14 @@ int match_main(int argc, char **argv) {
 
     int games = 2 * c.pairs;
     double score = (m->a_wins + 0.5 * m->draws) / games, elo, error;
-    elo_estimate(m->a_wins, m->draws, m->b_wins, &elo, &error);
-    printf("%s vs %s: +%d =%d -%d, score %.1f%%, Elo %+.0f +/- %.0f\n", c.paths[0], c.paths[1],
-           m->a_wins, m->draws, m->b_wins, 100 * score, elo, error);
+    bool saturated;
+    elo_estimate(m->a_wins, m->draws, m->b_wins, &elo, &error, &saturated);
+    printf("%s vs %s: +%d =%d -%d, score %.1f%%, Elo %+.0f +/- %.0f%s\n", c.paths[0], c.paths[1],
+           m->a_wins, m->draws, m->b_wins, 100 * score, elo, error,
+           saturated ? " (one-sided: only a bound)" : "");
     printf("summary games=%d a_wins=%d draws=%d b_wins=%d score=%.4f elo=%.1f elo_err=%.1f"
-           " cpu_s=%.3f wall_s=%.3f\n",
-           games, m->a_wins, m->draws, m->b_wins, score, elo, error, cpu, wall);
+           " saturated=%d cpu_s=%.3f wall_s=%.3f\n",
+           games, m->a_wins, m->draws, m->b_wins, score, elo, error, saturated, cpu, wall);
 
     pthread_mutex_destroy(&m->lock);
     free(threads);

@@ -133,7 +133,10 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every,
     pthread_t *ids = checked_calloc((size_t)threads, sizeof *ids);
     for (int t = 0; t < threads; t++) {
         jobs[t] = (ResolveJob){ d, (const uint8_t (*)[DATA_RECORD_SIZE])records, resolve_with, threads, t, 0, 0, 0 };
-        pthread_create(&ids[t], NULL, resolve_worker, &jobs[t]);
+        if (pthread_create(&ids[t], NULL, resolve_worker, &jobs[t]) != 0) {
+            fprintf(stderr, "cannot start thread %d\n", t);
+            exit(1);
+        }
     }
     size_t invalid = 0;
     for (int t = 0; t < threads; t++) {
@@ -229,7 +232,10 @@ static void evaluate(Epoch *e, const float *w, double grad[FEATURE_COUNT], doubl
     pthread_t ids[CHUNKS];
     for (int t = 0; t < e->threads; t++) {
         jobs[t] = (EpochJob){ e, t };
-        pthread_create(&ids[t], NULL, epoch_worker, &jobs[t]);
+        if (pthread_create(&ids[t], NULL, epoch_worker, &jobs[t]) != 0) {
+            fprintf(stderr, "cannot start thread %d\n", t);
+            exit(1);
+        }
     }
     for (int t = 0; t < e->threads; t++)
         pthread_join(ids[t], NULL);

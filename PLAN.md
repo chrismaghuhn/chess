@@ -212,8 +212,13 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 - Die Figurenwerte nähern sich ohne jedes Vorwissen dem klassischen 1 : 3 : 3 : 5 : 9 an
   (Reihenfolge stimmt ab Gen 1, Läufer > Springer, Verhältnisse wachsen weiter).
 - ~80 % des Aufwands sind Selbstpartien, ~20 % Tuning (Auflösung zu ruhigen Stellungen eingeschlossen).
-- Elo gegen Gen 0 sättigt ab Gen 2 bei 400 : 0; aussagekräftig ist nur die verkettete Kurve.
-  Die verketteten Fehler addieren sich, die absolute Zahl ist daher unsicher (± 217).
+- Elo gegen Gen 0 sättigt ab Gen 2 bei 399 : 1 (Gen 1: 398 : 2); aussagekräftig ist nur die verkettete Kurve.
+  Die verketteten Fehler addieren sich, die absolute Zahl ist daher unsicher (± 217). Besonders der
+  erste Schritt (+920) liegt nahe an der Messgrenze von 400 Partien (~1160 Elo) und trägt das Niveau
+  der ganzen Kurve; die Zuwächse ab Gen 2 sind belastbarer.
+- Gen 1 ist eher untertrainiert: Ihr Tuning endete bei Epoche 400 noch mit sinkender Validierungs-Loss.
+- `val_loss` in der CSV ist nicht zwischen Generationen vergleichbar: Die Validierungsmenge wächst mit
+  (jede 10. Partie aller bisherigen Daten).
 - Ab Gen 7 enden ~6 % der Selbstpartien am Zuglimit: Die Engine kann Gewinnstellungen nicht verwerten.
 
 ## Offene Fragen

@@ -21,6 +21,10 @@
  * Captures are sorted by the *learned* piece values (most valuable victim,
  * then least valuable attacker), which come from the current weights; with
  * all weights 0 they are all equal and history decides, as in generation 0.
+ * The king gets its learned value too, although it is only a positional
+ * average (a king is never captured); that only affects capture order. The
+ * tuner's printed piece values average over the squares seen in training
+ * instead of the nonzero weights; the two agree up to rarely used squares.
  */
 #define ORDER_HASH (INT64_C(1) << 60)
 #define ORDER_NOISY (INT64_C(1) << 50)

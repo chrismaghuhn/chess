@@ -107,7 +107,7 @@ int main(int argc, char **argv) {
         else if (strcmp(key, "--lr") == 0)
             ok = parse_double(value, &config.learning_rate);
         else if (strcmp(key, "--threads") == 0)
-            ok = parse_int(value, &config.threads) && config.threads >= 1;
+            ok = parse_int(value, &config.threads) && config.threads >= 1 && config.threads <= 256;
         else if (strcmp(key, "--val-every") == 0)
             ok = parse_int(value, &val_every);
         else if (strcmp(key, "--report") == 0)
