@@ -86,6 +86,17 @@ peer=$(timeout 60 "$engine" match --a "$tmp/tuned1.bin" --b-uci "$engine" --move
 "$engine" match --b-uci "$engine" --games 2 2>/dev/null && fail "UCI opponent without --movetime accepted"
 "$engine" match --b-uci /nonexistent --movetime 10 --games 2 2>/dev/null && fail "missing UCI engine accepted"
 
+# Network trainer: it can overfit a few games, and gives the same network for any thread count.
+nnue_train="$(dirname "$tuner")/nnue-train"
+fit=$(timeout 120 "$nnue_train" --data "$data" --resolve "$tmp/tuned1.bin" --out "$tmp/net1.bin" --hidden 16 \
+    --train-games 10 --epochs 80 --batch 256 --lr 0.01 --wd 0 --threads 1 2>&1) || fail "nnue-train run"
+first=$(printf '%s\n' "$fit" | sed -n 's/^epoch 1  train \([0-9.]*\)$/\1/p')
+last=$(printf '%s\n' "$fit" | sed -n 's/^epoch 80  train \([0-9.]*\)$/\1/p')
+awk "BEGIN { exit !($last < 0.5 * $first) }" 2>/dev/null || fail "nnue-train cannot overfit 10 games ($first -> $last)"
+timeout 120 "$nnue_train" --data "$data" --resolve "$tmp/tuned1.bin" --out "$tmp/net3.bin" --hidden 16 \
+    --train-games 10 --epochs 80 --batch 256 --lr 0.01 --wd 0 --threads 3 >/dev/null 2>&1 || fail "nnue-train 3 threads"
+cmp -s "$tmp/net1.bin" "$tmp/net3.bin" || fail "network depends on the thread count"
+
 # The generation loop runs end to end and resumes without redoing anything.
 run="$tmp/generations"
 rm -rf "$run"

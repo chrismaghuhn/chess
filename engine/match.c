@@ -17,6 +17,7 @@
 #include "movegen.h"
 #include "game.h"
 #include "rng.h"
+#include "nnue.h"
 #include "search.h"
 #include "ucipeer.h"
 
@@ -35,6 +36,7 @@ typedef struct {
     uint64_t seed;
     int hash_mb;
     const char *paths[2];
+    const char *nets[2]; /* optional network evaluation per side (experiment) */
     unsigned options[2]; /* search options of A and B */
     int movetime;        /* ms per move for both sides instead of nodes; 0 = use nodes */
     const char *uci;     /* B is this external UCI engine instead of weights */
@@ -45,6 +47,8 @@ typedef struct {
 typedef struct {
     Config cfg;
     Weights weights[2]; /* A, B */
+    Network networks[2];
+    bool has_network[2];
     pthread_mutex_t lock;
     int next_pair;
     int finished;
@@ -126,6 +130,8 @@ static void *worker(void *arg) {
     for (int k = 0; k < 2; k++) {
         search_set_weights(searchers[k], &m->weights[k]);
         search_set_options(searchers[k], c->options[k]);
+        if (m->has_network[k])
+            search_set_network(searchers[k], &m->networks[k]);
     }
 
     UciPeer peer, *peer_ptr = NULL;
@@ -237,6 +243,8 @@ static void usage(void) {
                     "                    [--hash MB]\n"
                     "Games are played in pairs with colors swapped; zero means all weights 0.\n"
                     "OPTS: none, all, or a list like pvs,nmp,lmr (default: the engine default).\n"
+                    "Experiment: --a-net / --b-net FILE evaluate that side with a network\n"
+                    "(its --a/--b weights then only order captures).\n"
                     "Against another engine: --b-uci PATH [--b-option Name=Value ...] --movetime MS\n"
                     "(B is then that engine; --movetime gives both sides the same time per move).\n");
 }
@@ -259,6 +267,10 @@ int match_main(int argc, char **argv) {
             c.paths[0] = value;
         else if (strcmp(key, "--b") == 0)
             c.paths[1] = value;
+        else if (strcmp(key, "--a-net") == 0)
+            c.nets[0] = value;
+        else if (strcmp(key, "--b-net") == 0)
+            c.nets[1] = value;
         else if (strcmp(key, "--movetime") == 0)
             ok = parse_int(value, &c.movetime) && c.movetime > 0;
         else if (strcmp(key, "--b-uci") == 0)
@@ -323,6 +335,14 @@ int match_main(int argc, char **argv) {
         } else if (strcmp(c.paths[k], "zero") == 0) {
             weights_zero(&m->weights[k]);
         } else if (!weights_load(c.paths[k], &m->weights[k], err, sizeof err)) {
+            fprintf(stderr, "%s\n", err);
+            free(m);
+            return 1;
+        }
+    }
+    for (int k = 0; k < 2; k++) {
+        char err[256];
+        if (c.nets[k] && !(m->has_network[k] = nnue_load(&m->networks[k], c.nets[k], err, sizeof err))) {
             fprintf(stderr, "%s\n", err);
             free(m);
             return 1;

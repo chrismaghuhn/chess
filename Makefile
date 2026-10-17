@@ -18,22 +18,27 @@ endif
 LIB_OBJ    := $(patsubst %.c,$(BUILD)/obj/%.o,$(wildcard src/*.c))
 ENGINE_OBJ := $(patsubst %.c,$(BUILD)/obj/%.o,$(wildcard engine/*.c))
 TUNER_OBJ  := $(patsubst %.c,$(BUILD)/obj/%.o,$(wildcard tuner/*.c))
+NNUE_OBJ   := $(patsubst %.c,$(BUILD)/obj/%.o,$(wildcard nnue/*.c))
 TEST_OBJ   := $(patsubst %.c,$(BUILD)/obj/%.o,$(wildcard tests/*.c))
 
 ENGINE      := $(BUILD)/engine
 TUNER       := $(BUILD)/tuner
+NNUE_TRAIN  := $(BUILD)/nnue-train
 PERFT       := $(BUILD)/perft
 SEARCH_TEST := $(BUILD)/search-test
 EVAL_TEST   := $(BUILD)/eval-test
 
 .PHONY: all debug test test-quick test-full test-debug bench clean
 
-all: $(ENGINE) $(TUNER) $(PERFT) $(SEARCH_TEST) $(EVAL_TEST)
+all: $(ENGINE) $(TUNER) $(NNUE_TRAIN) $(PERFT) $(SEARCH_TEST) $(EVAL_TEST)
 
 $(ENGINE): $(ENGINE_OBJ) $(LIB_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(TUNER): $(TUNER_OBJ) $(LIB_OBJ)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+$(NNUE_TRAIN): $(NNUE_OBJ) $(LIB_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(PERFT): $(BUILD)/obj/tests/perft.o $(LIB_OBJ)
@@ -84,4 +89,4 @@ test-debug:
 clean:
 	rm -rf build
 
--include $(LIB_OBJ:.o=.d) $(ENGINE_OBJ:.o=.d) $(TUNER_OBJ:.o=.d) $(TEST_OBJ:.o=.d)
+-include $(LIB_OBJ:.o=.d) $(ENGINE_OBJ:.o=.d) $(TUNER_OBJ:.o=.d) $(NNUE_OBJ:.o=.d) $(TEST_OBJ:.o=.d)

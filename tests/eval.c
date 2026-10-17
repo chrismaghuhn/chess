@@ -8,6 +8,9 @@
 
 #include "datafmt.h"
 #include "eval.h"
+#include "nnue.h"
+#include <math.h>
+#include <stdlib.h>
 #include "movegen.h"
 #include "rng.h"
 
@@ -311,6 +314,87 @@ static void test_data_format(const char *dir) {
     printf("data format: %d records checked\n", written);
 }
 
+/* The network: gradients, symmetry, the linear skip part, files. */
+static void test_nnue(const char *dir) {
+    uint64_t rng = 31337;
+    Network net;
+    CHECK(nnue_alloc(&net, 4), "allocate network");
+    for (int i = 0; i < NNUE_INPUTS; i++)
+        net.skip[i] = (float)((int)rng_below(&rng, 201) - 100);
+    for (int i = 0; i < NNUE_INPUTS * 4; i++)
+        net.w1[i] = (float)((int)rng_below(&rng, 2001) - 1000) / 10000.0f;
+    for (int h = 0; h < 4; h++)
+        net.b1[h] = 0.3f + 0.1f * (float)h;
+    for (int h = 0; h < 8; h++)
+        net.w2[h] = (float)((int)rng_below(&rng, 2001) - 1000) / 1000.0f;
+    net.b2 = 0.05f;
+
+    /* Analytic gradients against finite differences, for parameters of every group. */
+    Board b;
+    board_from_fen(&b, fens[1]);
+    uint16_t in[NNUE_MAX_ACTIVE];
+    int n = nnue_inputs(&b, in);
+    Network grad;
+    nnue_alloc(&grad, 4);
+    NnueCache cache;
+    nnue_forward(&net, in, n, &cache);
+    nnue_backward(&net, in, n, &cache, 1.0f, &grad);
+    float *params[] = { &net.skip[in[3]], &net.w1[in[5] * 4 + 1], &net.w1[nnue_flip(in[7]) * 4 + 2], &net.b1[0],
+                        &net.w2[1], &net.w2[6], &net.b2 };
+    float *grads[] = { &grad.skip[in[3]], &grad.w1[in[5] * 4 + 1], &grad.w1[nnue_flip(in[7]) * 4 + 2], &grad.b1[0],
+                       &grad.w2[1], &grad.w2[6], &grad.b2 };
+    for (size_t k = 0; k < sizeof params / sizeof params[0]; k++) {
+        float keep = *params[k], h = k == 0 ? 0.5f : 1e-3f;
+        *params[k] = keep + h;
+        double up = nnue_forward(&net, in, n, &cache);
+        *params[k] = keep - h;
+        double down = nnue_forward(&net, in, n, &cache);
+        *params[k] = keep;
+        double numeric = (up - down) / (2 * h), analytic = *grads[k];
+        CHECK(fabs(numeric - analytic) <= 0.02 * fabs(numeric) + 0.05, "nnue gradient %zu: %f vs %f", k, analytic,
+              numeric);
+    }
+    nnue_free(&grad);
+
+    /* Colour flip and mirror must not change the evaluation. */
+    for (int i = 0; i < 200; i++) {
+        Board p, flipped;
+        board_from_fen(&p, fens[i % FEN_COUNT]);
+        random_walk(&p, i % 50, &rng);
+        if (color_flip(&p, &flipped))
+            CHECK(abs(nnue_evaluate(&net, &p) - nnue_evaluate(&net, &flipped)) <= 1,
+                  "nnue colour flip: %d vs %d", nnue_evaluate(&net, &p), nnue_evaluate(&net, &flipped));
+    }
+
+    /* Saving and loading keeps every value. */
+    char path[512], err[256];
+    snprintf(path, sizeof path, "%s/test-net.bin", dir);
+    Network loaded;
+    CHECK(nnue_save(&net, path) && nnue_load(&loaded, path, err, sizeof err), "nnue file round trip: %s", err);
+    CHECK(loaded.hidden == 4 && nnue_evaluate(&loaded, &b) == nnue_evaluate(&net, &b), "nnue loaded network differs");
+    nnue_free(&loaded);
+    nnue_free(&net);
+
+    /* A linear-only network from linear weights evaluates exactly like the linear evaluation. */
+    Weights w;
+    float f[FEATURE_COUNT];
+    random_weights(&w, f, &rng);
+    Network linear;
+    nnue_alloc(&linear, 0);
+    nnue_skip_from_weights(&linear, &w);
+    for (int i = 0; i < 200; i++) {
+        Board p;
+        board_from_fen(&p, fens[i % FEN_COUNT]);
+        random_walk(&p, i % 50, &rng);
+        if (nnue_evaluate(&linear, &p) != eval_evaluate(&w, &p)) {
+            CHECK(false, "linear network %d vs linear eval %d", nnue_evaluate(&linear, &p), eval_evaluate(&w, &p));
+            break;
+        }
+    }
+    nnue_free(&linear);
+    printf("nnue: checked\n");
+}
+
 int main(int argc, char **argv) {
     if (argc != 2) {
         fprintf(stderr, "usage: %s <tmp dir>\n", argv[0]);
@@ -320,6 +404,7 @@ int main(int argc, char **argv) {
     test_eval();
     test_weight_files(argv[1]);
     test_data_format(argv[1]);
+    test_nnue(argv[1]);
 
     if (failures)
         printf("%d FAILED\n", failures);
