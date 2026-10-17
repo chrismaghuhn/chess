@@ -194,7 +194,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 6 | Reichere Bewertung (Experiment) | verworfen, siehe unten: kostet mehr Tempo, als es Elo bringt |
 | 7 | Knotenzahl pro Zug | welche Knotenzahl ergibt die meiste Stärke pro CPU-Sekunde Training |
 | 8 | Absolute Elo | Matches gegen Stockfish mit gedrosselter Stärke (nur Messung) |
-| 9 | NNUE (Experiment) | Offline-Test: schlägt ein kleines Netz das lineare Modell auf denselben eigenen Daten? |
+| 9 | NNUE (Experiment) | gestoppt: bessere Loss, aber schwächeres Spiel; Nebenbefund: lineares Modell auf allen Daten +97 Elo |
 
 ### Meilenstein 5: Tempo
 
@@ -395,6 +395,27 @@ Selbstpartien nur, wenn sie die aktuelle im sequentiellen Test besteht (Partiepa
 elo1 = +25…30, α = β = 0,1, abgebrochen nach ~800 Partien); sonst bleibt das alte Netz, die neuen Daten werden
 trotzdem verwendet. Die CPU-Zeit des Gates zählt zum Trainingsaufwand; die ehrliche Kurve kommt weiter aus den
 Anker-Matches (das Gate selbst überschätzt die Fortschritte).
+
+**Ergebnis** (Daten wie oben, 130.000 Partien; Logs und Netze in `runs/nnue-offline/`):
+
+| Modell | Test-Loss | Training (CPU) | Elo, 2000 Partien |
+|---|---|---|---|
+| linear über den Netz-Pfad (H = 0) | 0,1261 | 588 s | Bezug |
+| Netz H = 32 | **0,1187** | 1916 s | **−62 ± 15** (5000 Knoten, `all`), −60 ± 15 (1500, `exact`) |
+| Netz H = 64 | 0,1189 | 3360 s | – (nicht besser als H = 32) |
+| nur späte Generationen (52.800 Partien): linear / H = 32 | 0,1168 / **0,1140** | 202 / 884 s | H = 32: **−156 ± 16** |
+
+- **Stopp nach der vorab festgelegten Regel:** Das Netz sagt Ergebnisse besser vorher, spielt aber deutlich schlechter,
+  schon bei gleicher Knotenzahl. Die Bewertungen typischer Stellungen sehen vernünftig aus (kein offensichtlicher
+  Fehler). Wahrscheinlichste Ursache: Verteilungsverschiebung – trainiert wird nur auf ruhigen Stellungen aus echten
+  Partien, die Suche bewertet aber Millionen Stellungen, die so nie vorkommen; dort extrapoliert das lineare Modell
+  (Material bleibt Material), das Netz nicht, und Alpha-Beta findet genau diese Fehler.
+- **Nebenbefund: mehr Daten helfen dem linearen Modell stark.** Mit dem normalen Tuner auf allen 130.000 Partien
+  nachtrainiert (Start Lauf 7 Gen 12, 1328 CPU-s): **+97 ± 15 Elo** bei gleichen Knoten, **+168 ± 36** bei 0,1 s pro Zug
+  gegen Lauf 7 Gen 12 – grob 2050–2100 auf der Stockfish-Skala. Diese Gewichte (`runs/nnue-offline/linear-all.bin`)
+  spielt jetzt der Lichess-Bot.
+- Folgerung: Die Labels sind der Engpass, nicht das Modell. Daher als Nächstes Datenformat v2 (Suchbewertung als
+  Label) – siehe Recherche unten.
 
 **Option für später:** Selbstpartien speichern zusätzlich die eigene Suchbewertung jeder Stellung (Datenformat v2)
 und trainieren auf einer Mischung aus Bewertung und Ergebnis – ein Label pro Stellung statt pro Partie, deutlich
