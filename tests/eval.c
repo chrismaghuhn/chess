@@ -223,7 +223,7 @@ static void test_data_format(const char *dir) {
 
     int written = 0;
     char expected[FEN_COUNT * 30][FEN_MAX];
-    int results[FEN_COUNT * 30], plies[FEN_COUNT * 30];
+    int results[FEN_COUNT * 30], plies[FEN_COUNT * 30], scores[FEN_COUNT * 30];
     for (int i = 0; i < FEN_COUNT; i++) {
         for (int walk = 0; walk < 30; walk++) {
             Board b;
@@ -232,7 +232,10 @@ static void test_data_format(const char *dir) {
             b.fullmove = 1; /* not stored; rebuilt from the ply */
             uint8_t record[DATA_RECORD_SIZE];
             int result = (int)rng_below(&rng, 3), ply = written * 7;
-            data_pack(&b, RESULT_DRAW, ply, record);
+            /* every third record without a score; one with a mate score */
+            int score = written % 3 == 0 ? 0 : written == 1 ? -30990 : (int)rng_below(&rng, 4001) - 2000;
+            data_pack(&b, RESULT_DRAW, ply, score, written % 3 != 0, record);
+            scores[written] = score;
             data_set_outcome(record, result, (GameEnd)(written % END_COUNT));
             fwrite(record, 1, sizeof record, f);
 
@@ -249,19 +252,21 @@ static void test_data_format(const char *dir) {
     fclose(f);
 
     uint64_t count = 0;
-    f = data_open(path, &count, err, sizeof err);
+    int record_size = 0;
+    f = data_open(path, &count, &record_size, err, sizeof err);
     CHECK(f && count == (uint64_t)written, "open data: %s (count %llu)", err, (unsigned long long)count);
     if (!f)
         return;
     for (int i = 0; i < written; i++) {
         uint8_t record[DATA_RECORD_SIZE];
         DataPosition pos;
-        bool ok = fread(record, 1, sizeof record, f) == sizeof record && data_unpack(record, &pos);
+        bool ok = data_read(f, record_size, record) && data_unpack(record, &pos);
         char fen[FEN_MAX] = "";
         if (ok)
             board_to_fen(&pos.board, fen, sizeof fen);
         CHECK(ok && strcmp(fen, expected[i]) == 0 && pos.result == results[i] && pos.ply == plies[i]
-                  && pos.end == (GameEnd)(i % END_COUNT) && board_is_consistent(&pos.board),
+                  && pos.end == (GameEnd)(i % END_COUNT) && board_is_consistent(&pos.board)
+                  && pos.score == scores[i] && pos.score_valid == (i % 3 != 0),
               "data round trip %d:\n  expected %s\n  got      %s", i, expected[i], fen);
     }
     fclose(f);
@@ -285,11 +290,14 @@ static void test_data_format(const char *dir) {
         { "en passant on the wrong rank", START_FEN, 26, E3 },
         { "unused nibble set", "4k3/8/8/8/8/8/8/4K3 w - - 0 1", 9, 0x01 },
         { "more than 32 pieces", START_FEN, 2, 0xFF },
+        { "a score marked invalid", START_FEN, 32, 5 },
+        { "unknown flags", START_FEN, 34, 2 },
+        { "reserved byte 35", START_FEN, 35, 1 },
     };
     for (size_t i = 0; i < sizeof broken / sizeof broken[0]; i++) {
         Board b;
         board_from_fen(&b, broken[i].fen);
-        data_pack(&b, RESULT_DRAW, 0, record);
+        data_pack(&b, RESULT_DRAW, 0, 0, false, record);
         CHECK(data_unpack(record, &pos), "unbroken record for %s rejected", broken[i].what);
         record[broken[i].offset] = broken[i].value;
         CHECK(!data_unpack(record, &pos), "record with %s accepted", broken[i].what);
@@ -300,7 +308,7 @@ static void test_data_format(const char *dir) {
     fseek(f, 12, SEEK_SET);
     fputc(1, f);
     fclose(f);
-    CHECK(data_open(path, &count, err, sizeof err) == NULL, "data file with reserved header word accepted");
+    CHECK(data_open(path, &count, &record_size, err, sizeof err) == NULL, "data file with reserved header word accepted");
     f = fopen(path, "r+b");
     fseek(f, 12, SEEK_SET);
     fputc(0, f);
@@ -310,7 +318,30 @@ static void test_data_format(const char *dir) {
     f = fopen(path, "ab");
     fputc(0, f);
     fclose(f);
-    CHECK(data_open(path, &count, err, sizeof err) == NULL, "truncated data file accepted");
+    CHECK(data_open(path, &count, &record_size, err, sizeof err) == NULL, "truncated data file accepted");
+
+    /* Version 1 files (32-byte records, no scores) stay readable. */
+    char v1[512];
+    snprintf(v1, sizeof v1, "%s/format-v1.bin", dir);
+    f = fopen(v1, "wb");
+    uint8_t header[DATA_HEADER_SIZE] = { 'S', 'C', 'H', 'D', 1, 0, 0, 0, DATA_RECORD_SIZE_V1, 0, 0, 0 };
+    fwrite(header, 1, sizeof header, f);
+    Board b;
+    board_from_fen(&b, fens[1]);
+    for (int i = 0; i < 3; i++) {
+        data_pack(&b, RESULT_DRAW, 10 + i, 0, false, record);
+        data_set_outcome(record, RESULT_WIN, END_MATE);
+        fwrite(record, 1, DATA_RECORD_SIZE_V1, f);
+    }
+    fclose(f);
+    f = data_open(v1, &count, &record_size, err, sizeof err);
+    bool v1_ok = f && count == 3 && record_size == DATA_RECORD_SIZE_V1;
+    for (int i = 0; i < 3 && v1_ok; i++)
+        v1_ok = data_read(f, record_size, record) && data_unpack(record, &pos) && pos.ply == 10 + i
+             && !pos.score_valid && pos.end == END_MATE;
+    if (f)
+        fclose(f);
+    CHECK(v1_ok, "version 1 data file not readable: %s", err);
     printf("data format: %d records checked\n", written);
 }
 

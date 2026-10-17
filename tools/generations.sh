@@ -7,6 +7,8 @@
 #   GAMES [2000] self-play games per generation    NODES [1500] nodes per move (most strength per CPU, M7)
 #   MATCH_GAMES [400] games per match              EPOCHS [400] tuner epochs
 #   SEARCH [exact] search options for self-play and matches (see engine match)
+#   LAMBDA [0] weight of self-play search scores in the tuner's target (data v2)
+#   RESIGN [off] calibrated resignation in self-play (on/off)
 #   THREADS [all cores]                            ENGINE, TUNER: binaries
 #
 # Writes RUN_DIR/generations.csv; logs of every step go to RUN_DIR/logs.
@@ -38,6 +40,8 @@ NODES=${NODES:-1500}
 MATCH_GAMES=${MATCH_GAMES:-400}
 EPOCHS=${EPOCHS:-400}
 SEARCH=${SEARCH:-exact}
+LAMBDA=${LAMBDA:-0}
+RESIGN=${RESIGN:-off}
 THREADS=${THREADS:-$(nproc)}
 ENGINE=${ENGINE:-build/release/engine}
 TUNER=${TUNER:-build/release/tuner}
@@ -49,6 +53,9 @@ csv="$run/generations.csv"
 # produced it: a run cannot be continued by an engine that searches differently.
 fingerprint=$("$ENGINE" bench 7 "$SEARCH" | sed -n 's/^\([0-9]*\) nodes.*/\1/p')
 settings="games=$GAMES nodes=$NODES match_games=$MATCH_GAMES epochs=$EPOCHS search=$SEARCH engine=$fingerprint"
+# Newer settings are only written when used, so older runs keep resuming.
+[ "$LAMBDA" = 0 ] || settings="$settings lambda=$LAMBDA"
+[ "$RESIGN" = off ] || settings="$settings resign=$RESIGN"
 if [ -f "$run/settings.txt" ]; then
     if [ "$(cat "$run/settings.txt")" != "$settings" ]; then
         echo "$run was started with: $(cat "$run/settings.txt")" >&2
@@ -103,10 +110,10 @@ for g in $(seq 1 "$gens"); do
     selfplay_log="$run/logs/selfplay$p.txt"
     if [ "$p" -eq 0 ]; then
         step "$selfplay_log" "$ENGINE" selfplay --games "$GAMES" --nodes "$NODES" --threads "$THREADS" \
-            --seed $((1000 + p)) --search "$SEARCH" --out "$run/data/gen$p.bin"
+            --seed $((1000 + p)) --search "$SEARCH" --resign "$RESIGN" --out "$run/data/gen$p.bin"
     else
         step "$selfplay_log" "$ENGINE" selfplay --games "$GAMES" --nodes "$NODES" --threads "$THREADS" \
-            --seed $((1000 + p)) --search "$SEARCH" --out "$run/data/gen$p.bin" --weights "$(weights "$p")"
+            --seed $((1000 + p)) --search "$SEARCH" --resign "$RESIGN" --out "$run/data/gen$p.bin" --weights "$(weights "$p")"
     fi
     data="$data --data $run/data/gen$p.bin"
 
@@ -115,11 +122,11 @@ for g in $(seq 1 "$gens"); do
     if [ "$p" -eq 0 ]; then
         # shellcheck disable=SC2086
         step "$tune_log" "$TUNER" $data --out "$(weights "$g")" --threads "$THREADS" \
-            --epochs "$EPOCHS" --report 0
+            --epochs "$EPOCHS" --lambda "$LAMBDA" --report 0
     else
         # shellcheck disable=SC2086
         step "$tune_log" "$TUNER" $data --init "$(weights "$p")" --out "$(weights "$g")" \
-            --threads "$THREADS" --epochs "$EPOCHS" --report 0
+            --threads "$THREADS" --epochs "$EPOCHS" --lambda "$LAMBDA" --report 0
     fi
 
     # Measure.

@@ -51,7 +51,8 @@ static bool parse_double(const char *s, double *out) {
 
 static void usage(void) {
     fprintf(stderr, "usage: tuner --out FILE --data FILE [--data FILE ...] [--init FILE]\n"
-                    "             [--epochs N] [--lr X] [--threads N] [--val-every N] [--report N]\n");
+                    "             [--epochs N] [--lr X] [--threads N] [--val-every N] [--report N]\n"
+                    "             [--lambda X: weight of self-play search scores in the target, 0..1]\n");
 }
 
 /*
@@ -88,6 +89,7 @@ int main(int argc, char **argv) {
 
     char *data[MAX_DATA_FILES];
     int data_count = 0, val_every = 10;
+    double lambda = 0;
     const char *out = NULL, *init = NULL;
     TuneConfig config = { .epochs = 400, .learning_rate = 2.0, .threads = 1, .report_every = 50 };
 
@@ -112,6 +114,8 @@ int main(int argc, char **argv) {
             ok = parse_int(value, &val_every);
         else if (strcmp(key, "--report") == 0)
             ok = parse_int(value, &config.report_every);
+        else if (strcmp(key, "--lambda") == 0)
+            ok = (parse_double(value, &lambda) || strcmp(value, "0") == 0) && lambda <= 1;
         else
             ok = false;
         if (!ok) {
@@ -138,12 +142,12 @@ int main(int argc, char **argv) {
     weights_from_float(w, &resolve);
 
     TuneData d;
-    if (!tune_load(&d, data, data_count, val_every, &resolve, config.threads, err, sizeof err)) {
+    if (!tune_load(&d, data, data_count, val_every, lambda, &resolve, config.threads, err, sizeof err)) {
         fprintf(stderr, "%s\n", err);
         return 1;
     }
-    fprintf(stderr, "%zu positions (%zu training, %zu validation), %zu unresolved, %" PRIu64
-            " quiescence nodes\n", d.count, d.train_count, d.count - d.train_count, d.unresolved,
+    fprintf(stderr, "%zu positions (%zu training, %zu validation), %zu with search scores, %zu unresolved, %" PRIu64
+            " quiescence nodes\n", d.count, d.train_count, d.count - d.train_count, d.scored, d.unresolved,
             d.resolve_nodes);
 
     TuneResult r = tune_run(&d, w, &config);

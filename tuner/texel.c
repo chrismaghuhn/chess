@@ -35,7 +35,7 @@ typedef struct {
     const uint8_t (*records)[DATA_RECORD_SIZE];
     const Weights *weights;
     int threads, id;
-    size_t invalid, unresolved;
+    size_t invalid, unresolved, scored;
     uint64_t nodes;
 } ResolveJob;
 
@@ -71,15 +71,22 @@ static void *resolve_worker(void *arg) {
             d->features[i][k] = (PackedFeature)(f[k].index | (negative ? FEATURE_NEGATIVE : 0));
         }
         d->feature_count[i] = (uint8_t)n;
-        d->target[i] = (float)pos.result / 2.0f;
+        double target = pos.result / 2.0;
+        if (pos.score_valid) {
+            job->scored++;
+            double expected = 1.0 / (1.0 + exp(-pos.score * SIGMOID_SCALE));
+            target = pos.end == END_PLY_LIMIT ? expected : d->lambda * expected + (1 - d->lambda) * target;
+        }
+        d->target[i] = (float)target;
     }
     search_free(s);
     return NULL;
 }
 
-bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every,
+bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, double lambda,
                const Weights *resolve_with, int threads, char *err, size_t err_size) {
     memset(d, 0, sizeof *d);
+    d->lambda = lambda;
 
     /* Read all records, marking validation games on the way. */
     size_t capacity = 0;
@@ -89,7 +96,8 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every,
 
     for (int p = 0; p < path_count; p++) {
         uint64_t count;
-        FILE *f = data_open(paths[p], &count, err, err_size);
+        int record_size;
+        FILE *f = data_open(paths[p], &count, &record_size, err, err_size);
         if (!f) {
             free(records);
             free(validation);
@@ -107,7 +115,7 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every,
         int prev_ply = -2;
         for (uint64_t i = 0; i < count; i++) {
             uint8_t *r = records[d->count];
-            if (fread(r, 1, DATA_RECORD_SIZE, f) != DATA_RECORD_SIZE) {
+            if (!data_read(f, record_size, r)) {
                 snprintf(err, err_size, "%s: read error", paths[p]);
                 fclose(f);
                 free(records);
@@ -132,7 +140,7 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every,
     ResolveJob *jobs = checked_calloc((size_t)threads, sizeof *jobs);
     pthread_t *ids = checked_calloc((size_t)threads, sizeof *ids);
     for (int t = 0; t < threads; t++) {
-        jobs[t] = (ResolveJob){ d, (const uint8_t (*)[DATA_RECORD_SIZE])records, resolve_with, threads, t, 0, 0, 0 };
+        jobs[t] = (ResolveJob){ d, (const uint8_t (*)[DATA_RECORD_SIZE])records, resolve_with, threads, t, 0, 0, 0, 0 };
         if (pthread_create(&ids[t], NULL, resolve_worker, &jobs[t]) != 0) {
             fprintf(stderr, "cannot start thread %d\n", t);
             exit(1);
@@ -143,6 +151,7 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every,
         pthread_join(ids[t], NULL);
         invalid += jobs[t].invalid;
         d->unresolved += jobs[t].unresolved;
+        d->scored += jobs[t].scored;
         d->resolve_nodes += jobs[t].nodes;
     }
     free(jobs);

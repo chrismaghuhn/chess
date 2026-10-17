@@ -45,7 +45,7 @@ bool game_play(Game *g, Move m) {
 }
 
 const char *const game_end_names[END_COUNT] = {
-    "none", "mate", "stalemate", "repetition", "fifty-moves", "material", "ply-limit",
+    "none", "mate", "stalemate", "repetition", "fifty-moves", "material", "ply-limit", "resign",
 };
 
 GameResult game_result_detail(const Game *g, GameEnd *end) {

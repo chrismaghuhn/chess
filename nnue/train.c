@@ -119,7 +119,8 @@ static bool load(NetData *d, char **paths, int path_count, long train_games, con
     for (int p = 0; p < path_count; p++) {
         char err[256];
         uint64_t count;
-        FILE *f = data_open(paths[p], &count, err, sizeof err);
+        int record_size;
+        FILE *f = data_open(paths[p], &count, &record_size, err, sizeof err);
         if (!f) {
             fprintf(stderr, "%s\n", err);
             return false;
@@ -128,7 +129,7 @@ static bool load(NetData *d, char **paths, int path_count, long train_games, con
         long game = -1;
         for (uint64_t i = 0; i < count; i++) {
             uint8_t r[DATA_RECORD_SIZE];
-            if (fread(r, 1, sizeof r, f) != sizeof r)
+            if (!data_read(f, record_size, r))
                 return false;
             int ply = r[30] | r[31] << 8;
             if (ply != prev + 1) {
@@ -144,7 +145,8 @@ static bool load(NetData *d, char **paths, int path_count, long train_games, con
     for (int p = 0; p < path_count; p++) {
         char err[256];
         uint64_t count;
-        FILE *f = data_open(paths[p], &count, err, sizeof err);
+        int record_size;
+        FILE *f = data_open(paths[p], &count, &record_size, err, sizeof err);
         if (d->count + count > capacity) {
             capacity = (d->count + count) * 2;
             records = realloc(records, capacity * DATA_RECORD_SIZE);
@@ -160,7 +162,7 @@ static bool load(NetData *d, char **paths, int path_count, long train_games, con
         bool keep = true;
         for (uint64_t i = 0; i < count; i++) {
             uint8_t r[DATA_RECORD_SIZE];
-            if (fread(r, 1, sizeof r, f) != sizeof r)
+            if (!data_read(f, record_size, r))
                 return false;
             int ply = r[30] | r[31] << 8;
             if (ply != prev + 1) {

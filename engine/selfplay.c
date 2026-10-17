@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +21,24 @@
 
 #define MAX_RANDOM_PLIES 40
 
+/*
+ * Resignation. A side resigns once its own search and the opponent's agree
+ * for RESIGN_PLIES plies in a row that it is at least T behind. T is
+ * calibrated in every run: the first CALIBRATION_SHARE of the games never
+ * resign and record, for each candidate T, whether the side that would have
+ * resigned went on to lose anyway. The smallest T whose false-resignation
+ * rate stays below MAX_FALSE_RESIGN (one-sided 95% Wilson bound, at least
+ * MIN_TRIGGERS cases) is used for the rest; if none qualifies, nobody
+ * resigns. Games cut at the ply limit say nothing and are left out. The
+ * calibration games depend only on their seeds, so T does too.
+ */
+#define RESIGN_PLIES 4
+#define CALIBRATION_SHARE 0.2
+#define MAX_FALSE_RESIGN 0.025
+#define MIN_TRIGGERS 20
+static const int resign_candidates[] = { 200, 300, 400, 600, 800, 1200, 2000 };
+#define CANDIDATES (int)(sizeof resign_candidates / sizeof resign_candidates[0])
+
 typedef struct {
     int games;
     int threads;
@@ -30,6 +49,7 @@ typedef struct {
     int hash_mb;      /* per thread */
     const char *weights_path;
     unsigned options; /* search options */
+    bool resign;      /* calibrated resignation (see above) */
     const char *out_path;
 } Config;
 
@@ -41,6 +61,7 @@ typedef struct {
     GameEnd end;
     int plies;
     uint64_t nodes;
+    int trigger[CANDIDATES]; /* side that would have resigned at each candidate, or -1 */
 } Played;
 
 /*
@@ -61,6 +82,13 @@ typedef struct {
     uint64_t positions, plies, nodes;
     int results[4];
     int ends[END_COUNT];
+
+    /* Resignation calibration. */
+    pthread_cond_t calibrated;
+    int calibration_games, calibration_done;
+    int triggers[CANDIDATES], false_triggers[CANDIDATES];
+    int threshold; /* 0 = no resignation */
+    bool zero_weights;
 } Selfplay;
 
 static double clock_seconds(clockid_t clock) {
@@ -78,10 +106,17 @@ static void *checked_alloc(size_t size) {
     return p;
 }
 
-static Played *play_game(const Config *c, Search *s, int id) {
+/*
+ * Plays game id. With threshold > 0 a side resigns as described above;
+ * either way, the plies at which each candidate threshold would have fired
+ * are recorded for calibration.
+ */
+static Played *play_game(const Config *c, Search *s, int id, int threshold, bool scores_valid) {
     uint64_t rng = c->seed ^ (0xD1B54A32D192ED03ULL * (uint64_t)(id + 1));
     Played *p = checked_alloc(sizeof *p);
     p->records = checked_alloc((size_t)c->max_plies * DATA_RECORD_SIZE);
+    for (int k = 0; k < CANDIDATES; k++)
+        p->trigger[k] = -1;
 
     Board start;
     board_from_fen(&start, START_FEN);
@@ -93,6 +128,7 @@ static Played *play_game(const Config *c, Search *s, int id) {
 
     search_clear(s);
     int ply = c->random_plies;
+    int recent[RESIGN_PLIES], seen = 0; /* last search scores, white's view */
     GameEnd end;
     GameResult result;
     while ((result = game_result_detail(&g, &end)) == GAME_ONGOING) {
@@ -101,7 +137,6 @@ static Played *play_game(const Config *c, Search *s, int id) {
             end = END_PLY_LIMIT;
             break;
         }
-        data_pack(&g.board, RESULT_DRAW, ply, p->records[p->count++]);
 
         SearchLimits limits;
         search_limits_init(&limits);
@@ -109,6 +144,30 @@ static Played *play_game(const Config *c, Search *s, int id) {
         limits.seed = rng_next(&rng) | 1;
         SearchResult r = search_run(s, &g, &limits, false);
         p->nodes += r.nodes;
+        data_pack(&g.board, RESULT_DRAW, ply, r.score, scores_valid, p->records[p->count++]);
+
+        recent[seen++ % RESIGN_PLIES] = g.board.side == WHITE ? r.score : -r.score;
+        int loser = -1;
+        if (seen >= RESIGN_PLIES) {
+            int low = recent[0], high = recent[0];
+            for (int k = 1; k < RESIGN_PLIES; k++) {
+                low = recent[k] < low ? recent[k] : low;
+                high = recent[k] > high ? recent[k] : high;
+            }
+            for (int k = 0; k < CANDIDATES; k++) {
+                int side = high <= -resign_candidates[k] ? WHITE : low >= resign_candidates[k] ? BLACK : -1;
+                if (side >= 0 && p->trigger[k] < 0)
+                    p->trigger[k] = side;
+                if (side >= 0 && resign_candidates[k] == threshold)
+                    loser = side;
+            }
+        }
+        if (loser >= 0) {
+            result = loser == WHITE ? GAME_BLACK_WINS : GAME_WHITE_WINS;
+            end = END_RESIGN;
+            break;
+        }
+
         game_play(&g, r.best);
         ply++;
     }
@@ -121,6 +180,39 @@ static Played *play_game(const Config *c, Search *s, int id) {
     p->end = end;
     p->plies = ply;
     return p;
+}
+
+/* Upper end of a one-sided 95% Wilson interval for a rate of hits in n. */
+static double wilson_upper(int hits, int n) {
+    if (n == 0)
+        return 1;
+    const double z = 1.6449;
+    double phat = (double)hits / n, z2 = z * z;
+    double center = phat + z2 / (2.0 * n), margin = z * sqrt(phat * (1 - phat) / n + z2 / (4.0 * n * n));
+    return (center + margin) / (1 + z2 / n);
+}
+
+/* Counts a finished calibration game; the last one picks the threshold. Lock held. */
+static void calibrate(Selfplay *sp, const Played *p) {
+    if (p->end != END_PLY_LIMIT) {
+        for (int k = 0; k < CANDIDATES; k++) {
+            if (p->trigger[k] < 0)
+                continue;
+            sp->triggers[k]++;
+            bool lost = p->result == (p->trigger[k] == WHITE ? GAME_BLACK_WINS : GAME_WHITE_WINS);
+            sp->false_triggers[k] += !lost;
+        }
+    }
+    if (++sp->calibration_done < sp->calibration_games)
+        return;
+    sp->threshold = 0;
+    for (int k = 0; k < CANDIDATES && sp->cfg.resign; k++) {
+        if (sp->triggers[k] >= MIN_TRIGGERS && wilson_upper(sp->false_triggers[k], sp->triggers[k]) <= MAX_FALSE_RESIGN) {
+            sp->threshold = resign_candidates[k];
+            break;
+        }
+    }
+    pthread_cond_broadcast(&sp->calibrated);
 }
 
 /* Hands in a finished game and writes every game whose turn has come. */
@@ -162,10 +254,22 @@ static void *worker(void *arg) {
     for (;;) {
         pthread_mutex_lock(&sp->lock);
         int id = sp->write_failed ? sp->cfg.games : sp->next_game++;
+        /* Games after the calibration games wait for the threshold. */
+        bool calibrating = id < sp->calibration_games;
+        while (!calibrating && id < sp->cfg.games && sp->calibration_done < sp->calibration_games)
+            pthread_cond_wait(&sp->calibrated, &sp->lock);
+        int threshold = calibrating ? 0 : sp->threshold;
         pthread_mutex_unlock(&sp->lock);
         if (id >= sp->cfg.games)
             break;
-        store(sp, id, play_game(&sp->cfg, s, id));
+
+        Played *p = play_game(&sp->cfg, s, id, threshold, !sp->zero_weights);
+        if (calibrating) {
+            pthread_mutex_lock(&sp->lock);
+            calibrate(sp, p);
+            pthread_mutex_unlock(&sp->lock);
+        }
+        store(sp, id, p);
     }
     search_free(s);
     return NULL;
@@ -175,7 +279,7 @@ static void usage(void) {
     fprintf(stderr,
             "usage: engine selfplay --out FILE [--games N] [--nodes N] [--threads N]\n"
             "                       [--weights FILE] [--search OPTS] [--seed N] [--random-plies 0..%d]\n"
-            "                       [--max-plies N] [--hash MB]\n",
+            "                       [--max-plies N] [--hash MB] [--resign on|off]\n",
             MAX_RANDOM_PLIES);
 }
 
@@ -213,6 +317,8 @@ static bool parse_args(int argc, char **argv, Config *c) {
             c->out_path = value;
         else if (strcmp(key, "--weights") == 0)
             c->weights_path = value;
+        else if (strcmp(key, "--resign") == 0)
+            ok = (strcmp(value, "on") == 0 && (c->resign = true)) || (strcmp(value, "off") == 0 && !(c->resign = false));
         else if (strcmp(key, "--search") == 0)
             ok = search_parse_options(value, &c->options);
         else if (strcmp(key, "--games") == 0)
@@ -278,6 +384,11 @@ int selfplay_main(int argc, char **argv) {
     }
     sp->done = checked_alloc((size_t)c.games * sizeof *sp->done);
     pthread_mutex_init(&sp->lock, NULL);
+    pthread_cond_init(&sp->calibrated, NULL);
+    sp->calibration_games = c.resign ? (int)ceil(c.games * CALIBRATION_SHARE) : c.games;
+    sp->zero_weights = true;
+    for (int i = 0; i < FEATURE_COUNT; i++)
+        sp->zero_weights = sp->zero_weights && sp->weights.w[i] == 0;
 
     double cpu_start = clock_seconds(CLOCK_PROCESS_CPUTIME_ID);
     double wall_start = clock_seconds(CLOCK_MONOTONIC);
@@ -314,16 +425,27 @@ int selfplay_main(int argc, char **argv) {
             printf(" %s %d", game_end_names[e], sp->ends[e]);
         printf("\naverage %.1f plies, %" PRIu64 " nodes, cpu %.2f s, wall %.2f s\n",
                (double)sp->plies / c.games, sp->nodes, cpu, wall);
+        printf("resignation (from %d games that never resign): threshold", sp->calibration_games);
+        for (int k = 0; k < CANDIDATES; k++)
+            printf(" %d: %d/%d false", resign_candidates[k], sp->false_triggers[k], sp->triggers[k]);
+        printf(" -> %s %d\n", c.resign ? "using" : "not used", sp->threshold);
+        int k_used = -1;
+        for (int k = 0; k < CANDIDATES; k++)
+            if (resign_candidates[k] == sp->threshold)
+                k_used = k;
         printf("summary games=%d positions=%" PRIu64 " white_wins=%d draws=%d black_wins=%d"
-               " plies=%" PRIu64 " nodes=%" PRIu64 " cpu_s=%.3f wall_s=%.3f\n",
+               " plies=%" PRIu64 " nodes=%" PRIu64 " resigned=%d resign_threshold=%d resign_false=%d resign_checks=%d"
+               " cpu_s=%.3f wall_s=%.3f\n",
                c.games, sp->positions, sp->results[GAME_WHITE_WINS], sp->results[GAME_DRAW],
-               sp->results[GAME_BLACK_WINS], sp->plies, sp->nodes, cpu, wall);
+               sp->results[GAME_BLACK_WINS], sp->plies, sp->nodes, sp->ends[END_RESIGN], sp->threshold,
+               k_used >= 0 ? sp->false_triggers[k_used] : 0, k_used >= 0 ? sp->triggers[k_used] : 0, cpu, wall);
     } else {
         fprintf(stderr, "error writing %s after %d games; the file is incomplete\n", c.out_path,
                 sp->next_write);
     }
 
     pthread_mutex_destroy(&sp->lock);
+    pthread_cond_destroy(&sp->calibrated);
     free(threads);
     free(sp->done);
     free(sp);
@@ -345,13 +467,14 @@ int data_info_main(int argc, char **argv) {
 
     char err[256];
     uint64_t count;
-    FILE *f = data_open(argv[1], &count, err, sizeof err);
+    int record_size;
+    FILE *f = data_open(argv[1], &count, &record_size, err, sizeof err);
     if (!f) {
         fprintf(stderr, "%s\n", err);
         return 1;
     }
 
-    uint64_t results[3] = { 0 }, ends[END_COUNT] = { 0 };
+    uint64_t results[3] = { 0 }, ends[END_COUNT] = { 0 }, scored = 0;
     uint64_t invalid = 0, in_check = 0, ply_sum = 0, games = 0, label_errors = 0;
     DataPosition prev = { .ply = -2 };
     bool have_prev = false;
@@ -360,7 +483,7 @@ int data_info_main(int argc, char **argv) {
     for (uint64_t i = 0; i <= count; i++) {
         DataPosition pos;
         bool last = i == count;
-        if (!last && (fread(record, 1, sizeof record, f) != sizeof record || !data_unpack(record, &pos))) {
+        if (!last && (!data_read(f, record_size, record) || !data_unpack(record, &pos))) {
             invalid++;
             have_prev = false;
             continue;
@@ -378,11 +501,12 @@ int data_info_main(int argc, char **argv) {
         } else if (pos.result != RESULT_WIN - prev.result || pos.end != prev.end) {
             label_errors++;
         }
-        if ((pos.end == END_MATE) == (pos.result == RESULT_DRAW))
+        if ((pos.end == END_MATE || pos.end == END_RESIGN) == (pos.result == RESULT_DRAW))
             label_errors++;
 
         results[pos.result]++;
         in_check += board_in_check(&pos.board);
+        scored += pos.score_valid;
         ply_sum += (uint64_t)pos.ply;
         if ((int64_t)i < samples) {
             char fen[FEN_MAX];
@@ -399,9 +523,9 @@ int data_info_main(int argc, char **argv) {
     for (int e = END_MATE; e < END_COUNT; e++)
         printf(" %s %" PRIu64, game_end_names[e], ends[e]);
     printf("\npositions=%" PRIu64 " games=%" PRIu64 " wins=%" PRIu64 " draws=%" PRIu64
-           " losses=%" PRIu64 " in_check=%" PRIu64 " invalid=%" PRIu64 " label_errors=%" PRIu64
+           " losses=%" PRIu64 " in_check=%" PRIu64 " scored=%" PRIu64 " invalid=%" PRIu64 " label_errors=%" PRIu64
            " average_ply=%.1f\n",
-           count, games, results[RESULT_WIN], results[RESULT_DRAW], results[RESULT_LOSS], in_check,
+           count, games, results[RESULT_WIN], results[RESULT_DRAW], results[RESULT_LOSS], in_check, scored,
            invalid, label_errors, count > invalid ? (double)ply_sum / (double)(count - invalid) : 0.0);
     return invalid || label_errors ? 1 : 0;
 }

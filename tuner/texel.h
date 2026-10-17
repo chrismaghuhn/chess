@@ -26,14 +26,22 @@ typedef struct {
     bool *validation;  /* every val_every-th game goes to validation */
     uint64_t seen[FEATURE_COUNT]; /* training positions using each feature */
     size_t unresolved;            /* positions whose quiet leaf was not found in time */
+    size_t scored;                /* positions whose target includes a search score */
+    double lambda;
     uint64_t resolve_nodes;       /* quiescence nodes spent finding quiet leaves */
 } TuneData;
 
 /*
  * Loads training data and resolves every position to its quiet leaf with
  * the given weights (what the engine with those weights would evaluate).
+ *
+ * The target mixes the self-play search score into the game result where
+ * the data has a valid score (version 2, not generation 0):
+ *   target = lambda * sigmoid(score) + (1 - lambda) * result,
+ * and uses the score alone for games cut at the ply limit, whose "draw" is
+ * not a real result. lambda = 0 trains on results only, as before.
  */
-bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every,
+bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, double lambda,
                const Weights *resolve_with, int threads, char *err, size_t err_size);
 void tune_free(TuneData *d);
 

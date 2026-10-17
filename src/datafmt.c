@@ -16,7 +16,7 @@ static uint64_t get_le(const uint8_t *p, int bytes) {
     return v;
 }
 
-void data_pack(const Board *b, int result, int ply, uint8_t out[DATA_RECORD_SIZE]) {
+void data_pack(const Board *b, int result, int ply, int score, bool score_valid, uint8_t out[DATA_RECORD_SIZE]) {
     memset(out, 0, DATA_RECORD_SIZE);
     put_le(out, b->all, 8);
 
@@ -32,6 +32,9 @@ void data_pack(const Board *b, int result, int ply, uint8_t out[DATA_RECORD_SIZE
     out[27] = (uint8_t)(b->halfmove < 255 ? b->halfmove : 255);
     out[28] = (uint8_t)result;
     put_le(out + 30, (uint64_t)ply, 2);
+    int16_t s = (int16_t)(!score_valid ? 0 : score > 32767 ? 32767 : score < -32768 ? -32768 : score);
+    put_le(out + 32, (uint16_t)s, 2);
+    out[34] = score_valid ? 1 : 0;
 }
 
 void data_set_outcome(uint8_t record[DATA_RECORD_SIZE], int white_result, GameEnd end) {
@@ -42,7 +45,9 @@ void data_set_outcome(uint8_t record[DATA_RECORD_SIZE], int white_result, GameEn
 bool data_unpack(const uint8_t in[DATA_RECORD_SIZE], DataPosition *out) {
     Bitboard occupied = get_le(in, 8);
     int pieces = popcount(occupied);
-    if (pieces > 32 || in[28] > RESULT_WIN || in[29] >= END_COUNT)
+    int16_t score = (int16_t)get_le(in + 32, 2);
+    if (pieces > 32 || in[28] > RESULT_WIN || in[29] >= END_COUNT || in[34] > 1 || in[35]
+        || (!in[34] && score))
         return false;
     for (int n = pieces; n < 32; n++)
         if (in[8 + n / 2] >> (4 * (n & 1)) & 15)
@@ -64,7 +69,14 @@ bool data_unpack(const uint8_t in[DATA_RECORD_SIZE], DataPosition *out) {
     out->result = in[28];
     out->end = (GameEnd)in[29];
     out->ply = ply;
+    out->score = score;
+    out->score_valid = in[34] == 1;
     return true;
+}
+
+bool data_read(FILE *f, int record_size, uint8_t out[DATA_RECORD_SIZE]) {
+    memset(out, 0, DATA_RECORD_SIZE);
+    return fread(out, 1, (size_t)record_size, f) == (size_t)record_size;
 }
 
 FILE *data_create(const char *path) {
@@ -82,7 +94,7 @@ FILE *data_create(const char *path) {
     return f;
 }
 
-FILE *data_open(const char *path, uint64_t *count, char *err, size_t err_size) {
+FILE *data_open(const char *path, uint64_t *count, int *record_size, char *err, size_t err_size) {
     FILE *f = fopen(path, "rb");
     if (!f) {
         snprintf(err, err_size, "cannot open %s", path);
@@ -95,7 +107,8 @@ FILE *data_open(const char *path, uint64_t *count, char *err, size_t err_size) {
         fclose(f);
         return NULL;
     }
-    if (get_le(header + 4, 4) != DATA_VERSION || get_le(header + 8, 4) != DATA_RECORD_SIZE
+    uint64_t version = get_le(header + 4, 4), size_field = get_le(header + 8, 4);
+    if (!((version == 1 && size_field == DATA_RECORD_SIZE_V1) || (version == 2 && size_field == DATA_RECORD_SIZE))
         || get_le(header + 12, 4) != 0) {
         snprintf(err, err_size, "%s: unsupported version or record size", path);
         fclose(f);
@@ -108,12 +121,13 @@ FILE *data_open(const char *path, uint64_t *count, char *err, size_t err_size) {
         return NULL;
     }
     long size = ftell(f);
-    if (size < DATA_HEADER_SIZE || (size - DATA_HEADER_SIZE) % DATA_RECORD_SIZE != 0) {
+    if (size < DATA_HEADER_SIZE || (size - DATA_HEADER_SIZE) % (long)size_field != 0) {
         snprintf(err, err_size, "%s: truncated (size %ld)", path, size);
         fclose(f);
         return NULL;
     }
     fseek(f, DATA_HEADER_SIZE, SEEK_SET);
-    *count = (uint64_t)(size - DATA_HEADER_SIZE) / DATA_RECORD_SIZE;
+    *count = (uint64_t)(size - DATA_HEADER_SIZE) / size_field;
+    *record_size = (int)size_field;
     return f;
 }

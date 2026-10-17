@@ -17,9 +17,10 @@ typedef struct {
 
 typedef enum { GAME_ONGOING, GAME_WHITE_WINS, GAME_BLACK_WINS, GAME_DRAW } GameResult;
 
-/* Why a game ended. END_PLY_LIMIT is not a chess rule; self-play uses it. */
+/* Why a game ended. END_PLY_LIMIT and END_RESIGN are not chess rules; self-play uses them. */
 typedef enum {
     END_NONE, END_MATE, END_STALEMATE, END_REPETITION, END_FIFTY_MOVES, END_MATERIAL, END_PLY_LIMIT,
+    END_RESIGN, /* self-play only: one side's search agreed it is lost (see selfplay) */
     END_COUNT
 } GameEnd;
 
