@@ -199,6 +199,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 11 | Schnelleres Tuning | −37 % CPU bei gleicher Stärke (Geduld + Leaf-Cache) |
 | 12 | Langer Lauf (36 Generationen) | lineare Bewertung sättigt bei ~+100 gegen den Anker |
 | 13 | NNUE mit Glättung über ruhige Züge | Netz schlägt das beste lineare Modell bei gleichen Knoten (+77); noch 5,6× zu langsam |
+| 14 | Schnelle Netz-Bewertung (int16, inkrementell) | 1,3× statt 5,6× langsamer; **+74 Elo bei gleicher Zeit** gegen das beste lineare Modell |
 
 ### Meilenstein 5: Tempo
 
@@ -544,6 +545,29 @@ soll am Netz-Anteil kaum etwas ändern; der lineare Teil bleibt frei. Kein Vorwi
   erreichbar.
 - Nebenbei: Die Glättung ist auch ein Kandidat für den linearen Teil und für reichere Merkmale (M6 scheiterte
   vielleicht am selben Rauschen).
+
+### Meilenstein 14: schnelle Netz-Bewertung
+
+- `nnue_quantize`: erste Schicht int16 (QA pro Netz so groß wie möglich, ohne dass eine Summe aus Bias und den 32
+  größten Zeilen überlaufen kann – für das H = 32-Netz ~1000), Ausgabeschicht int16 × int16 → int32 (AVX2
+  `madd`, sonst skalar mit exakt gleichem Ergebnis), linearer Teil als int32 (64 Einheiten pro cp).
+- Suche: ein Akkumulator pro Ply und Farbperspektive. Jeder Knoten meldet sein Brett an; bewertet wird lazy vom
+  tiefsten gültigen Vorfahren aus, pro Zug nur die Figuren, die sich geändert haben (aus den Bitboards abgeleitet –
+  deckt Rochade, en passant, Umwandlung und Nullzug ohne Sonderfälle ab). Die Debug-Build prüft jede Bewertung
+  gegen eine Neuberechnung.
+- Tests: 4515 inkrementelle Updates gleich Neuberechnung; Integer vs. Float höchstens 2 Einheiten.
+
+| Netz `h32-s10-e60` gegen `linear-all` | Knoten/s (Netz / linear) | Elo |
+|---|---|---|
+| gleiche Knoten (5000) | – | +106 ± 15 |
+| **gleiche Zeit (0,1 s/Zug)** | 4,9 / 6,4 Mio. (1,3×) | **+74 ± 15** |
+| zum Vergleich M13, Float von Grund auf | 1,1 / 6,4 Mio. (5,6×) | −153 ± 22 |
+
+- **Go nach der M9-Regel:** Der Tempoverlust (~150 · log2 1,3 ≈ 57 Elo) ist kleiner als der Qualitätsgewinn; das Netz
+  ist bei gleicher Zeit klar stärker als das beste lineare Modell. Grob 2120–2170 auf der Stockfish-Skala
+  (linear-all ~2050–2100), noch nicht direkt gemessen.
+- Das Netz ist offline aus Partien der *linearen* Engine gelernt (M9-Daten). Nächster Schritt: das Netz in die
+  Trainingsschleife (Selbstpartien mit Netz, Netz pro Generation mit `--smooth` nachtrainieren).
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 

@@ -1,0 +1,4 @@
+== h32-s10-e60 (integer) vs linear-all, 5000 nodes
+runs/run7-n1500/weights/gen12.bin vs runs/nnue-offline/linear-all.bin: +1210 =174 -616, score 64.8%, Elo +106 +/- 15
+== h32-s10-e60 (integer) vs linear-all, 0.1 s/move
+runs/run7-n1500/weights/gen12.bin vs runs/nnue-offline/linear-all.bin: +1092 =237 -671, score 60.5%, Elo +74 +/- 15
