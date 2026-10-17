@@ -52,7 +52,9 @@ static bool parse_double(const char *s, double *out) {
 static void usage(void) {
     fprintf(stderr, "usage: tuner --out FILE --data FILE [--data FILE ...] [--init FILE]\n"
                     "             [--epochs N] [--lr X] [--threads N] [--val-every N] [--report N]\n"
-                    "             [--lambda X: weight of self-play search scores in the target, 0..1]\n");
+                    "             [--lambda X: weight of self-play search scores in the target, 0..1]\n"
+                    "             [--patience N: stop after N epochs without a better validation loss]\n"
+                    "             [--leaf-cache on|off: keep resolved quiet leaves next to each data file]\n");
 }
 
 /*
@@ -90,6 +92,7 @@ int main(int argc, char **argv) {
     char *data[MAX_DATA_FILES];
     int data_count = 0, val_every = 10;
     double lambda = 0;
+    bool leaf_cache = false;
     const char *out = NULL, *init = NULL;
     TuneConfig config = { .epochs = 400, .learning_rate = 2.0, .threads = 1, .report_every = 50 };
 
@@ -114,6 +117,10 @@ int main(int argc, char **argv) {
             ok = parse_int(value, &val_every);
         else if (strcmp(key, "--report") == 0)
             ok = parse_int(value, &config.report_every);
+        else if (strcmp(key, "--patience") == 0)
+            ok = parse_int(value, &config.patience);
+        else if (strcmp(key, "--leaf-cache") == 0)
+            ok = (strcmp(value, "on") == 0 && (leaf_cache = true)) || (strcmp(value, "off") == 0 && !(leaf_cache = false));
         else if (strcmp(key, "--lambda") == 0)
             ok = (parse_double(value, &lambda) || strcmp(value, "0") == 0) && lambda <= 1;
         else
@@ -142,12 +149,12 @@ int main(int argc, char **argv) {
     weights_from_float(w, &resolve);
 
     TuneData d;
-    if (!tune_load(&d, data, data_count, val_every, lambda, &resolve, config.threads, err, sizeof err)) {
+    if (!tune_load(&d, data, data_count, val_every, lambda, leaf_cache, &resolve, config.threads, err, sizeof err)) {
         fprintf(stderr, "%s\n", err);
         return 1;
     }
-    fprintf(stderr, "%zu positions (%zu training, %zu validation), %zu with search scores, %zu unresolved, %" PRIu64
-            " quiescence nodes\n", d.count, d.train_count, d.count - d.train_count, d.scored, d.unresolved,
+    fprintf(stderr, "%zu positions (%zu training, %zu validation), %zu with search scores, %zu leaves from cache, %zu unresolved, %" PRIu64
+            " quiescence nodes\n", d.count, d.train_count, d.count - d.train_count, d.scored, d.cached, d.unresolved,
             d.resolve_nodes);
 
     TuneResult r = tune_run(&d, w, &config);
@@ -161,10 +168,10 @@ int main(int argc, char **argv) {
     double wall = clock_seconds(CLOCK_MONOTONIC) - wall_start;
     print_piece_values(&d, w);
     printf("summary positions=%zu train=%zu validation=%zu start_train_loss=%.6f start_val_loss=%.6f"
-           " train_loss=%.6f val_loss=%.6f best_epoch=%d epochs=%d unresolved=%zu quiet_nodes=%" PRIu64
+           " train_loss=%.6f val_loss=%.6f best_epoch=%d epochs=%d cached=%zu unresolved=%zu quiet_nodes=%" PRIu64
            " cpu_s=%.3f wall_s=%.3f\n",
            d.count, d.train_count, d.count - d.train_count, r.start_train_loss, r.start_val_loss,
-           r.train_loss, r.val_loss, r.best_epoch, config.epochs, d.unresolved, d.resolve_nodes, cpu, wall);
+           r.train_loss, r.val_loss, r.best_epoch, r.epochs_run, d.cached, d.unresolved, d.resolve_nodes, cpu, wall);
     tune_free(&d);
     return 0;
 }

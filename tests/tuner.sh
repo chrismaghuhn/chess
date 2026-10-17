@@ -39,6 +39,29 @@ val=$(timeout 60 "$tuner" --data "$data" --out "$tmp/tuned-val.bin" --epochs 60 
 [ "$(kv "$one" positions)" = "$(kv "$("$engine" data-info "$data" 0 | sed 's/^/summary /')" positions)" ] \
     || fail "tuner did not read every position"
 
+# Leaf cache: a second run reads every leaf from the cache and gives the same weights; a changed
+# data file invalidates its cache. Early stopping with patience ends before the epoch limit.
+cp "$data" "$tmp/cache-data.bin"
+rm -f "$tmp/cache-data.bin.leaves"
+c1=$(timeout 60 "$tuner" --data "$tmp/cache-data.bin" --out "$tmp/cache1.bin" --epochs 30 --report 0 --leaf-cache on)
+c2=$(timeout 60 "$tuner" --data "$tmp/cache-data.bin" --out "$tmp/cache2.bin" --epochs 30 --report 0 --leaf-cache on)
+[ -f "$tmp/cache-data.bin.leaves" ] || fail "no leaf cache written"
+[ "$(kv "$c1" cached)" = 0 ] && [ "$(kv "$c2" cached)" = "$(kv "$c2" positions)" ] \
+    || fail "leaf cache not used: $(kv "$c1" cached) then $(kv "$c2" cached)"
+cmp -s "$tmp/cache1.bin" "$tmp/cache2.bin" || fail "cached leaves give other weights"
+timeout 60 "$tuner" --data "$tmp/cache-data.bin" --out "$tmp/cache0.bin" --epochs 30 --report 0 >/dev/null
+cmp -s "$tmp/cache1.bin" "$tmp/cache0.bin" || fail "leaf cache changes the first run"
+python3 -c '
+import sys
+p = sys.argv[1]; d = bytearray(open(p, "rb").read())
+d[16 + 28] = (d[16 + 28] + 1) % 3   # another valid result for the first position
+open(p, "wb").write(d)' "$tmp/cache-data.bin"
+c3=$(timeout 60 "$tuner" --data "$tmp/cache-data.bin" --out "$tmp/cache3.bin" --epochs 30 --report 0 --leaf-cache on)
+[ "$(kv "$c3" cached)" = 0 ] || fail "stale leaf cache used for a changed data file"
+p=$(timeout 60 "$tuner" --data "$data" --out "$tmp/patience.bin" --epochs 400 --patience 5 --report 0)
+[ "$(kv "$p" epochs)" -lt 400 ] && [ "$(kv "$p" epochs)" -le $(($(kv "$p" best_epoch) + 5)) ] \
+    || fail "patience did not stop early: $p"
+
 # Starting from earlier weights (and resolving positions with them) is deterministic too.
 timeout 60 "$tuner" --data "$data" --init "$tmp/tuned1.bin" --out "$tmp/tuned-init1.bin" --epochs 5 \
     --threads 1 --report 0 >/dev/null || fail "tuner with --init"
