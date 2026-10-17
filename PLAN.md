@@ -196,7 +196,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 8 | Absolute Elo | Matches gegen Stockfish mit gedrosselter Stärke (nur Messung) |
 | 9 | NNUE (Experiment) | gestoppt: bessere Loss, aber schwächeres Spiel; Nebenbefund: lineares Modell auf allen Daten +97 Elo |
 | 10 | Daten v2: Suchbewertung als Label, kalibrierte Aufgabe | kein Gewinn (λ schadet, Aufgabe ~0); Entdeckung: Tuning ist >50 % der CPU |
-| 11 | Schnelleres Tuning | −41 % CPU bei gleicher Stärke (Geduld + Leaf-Cache) |
+| 11 | Schnelleres Tuning | −37 % CPU bei gleicher Stärke (Geduld + Leaf-Cache) |
 
 ### Meilenstein 5: Tempo
 
@@ -467,13 +467,21 @@ Stellungen neu zu ruhigen Stellungen auf und trainierte fest 400 Epochen.
 | (12 Gen., 1500 Knoten) | Selbstpartien | Tuning | gesamt | Anker-Elo Gen 12 |
 |---|---|---|---|---|
 | Lauf 7 | 1344 s | 1525 s | 2869 s | −7 ± 20 |
-| **Lauf 12** (`TUNER_FAST=on`) | 1463 s | **229 s** | **1692 s** | −23 ± 20 |
+| Lauf 12 (`TUNER_FAST=on`, vor dem Review) | 1463 s | 229 s | 1692 s | −23 ± 20 |
+| **Lauf 13** (`TUNER_FAST=on`, nach dem Review) | 1408 s | **391 s** | **1799 s** | −22 ± 21 |
 
-- Tuning −85 %, gesamt **−41 %** bei gleicher Stärke im Rahmen der Messgenauigkeit; bei gleicher CPU (~1700 s) liegt
-  Lauf 12 rund 85 Elo vor Lauf 7 (`runs/tuning-comparison.svg`).
-- Seit Lauf 1: etwa dieselbe Stärke mit ~1500 statt 4824 CPU-s – rund ein Drittel.
+- Tuning −74 %, gesamt **−37 %** bei gleicher Stärke im Rahmen der Messgenauigkeit; bei gleicher CPU (~1800 s) liegt
+  Lauf 13 rund 80 Elo vor Lauf 7 (`runs/tuning-comparison.svg`).
+- Der Review fand in Lauf 12 einen Fehler: Tune 1 hat Gen-0-Daten mit Null-Gewichten „aufgelöst“ (die finden keine
+  ruhigen Stellungen, fast jede Stellung blieb wie sie war) und das gecacht – diese Daten (anfangs 62 %) wurden nie
+  richtig aufgelöst. Seitdem werden Leaves von Null-Gewichten nicht gecacht; Gen 1 löst die Gen-0-Daten in Tune 2
+  einmal auf (~200 CPU-s, die Zufallspartien von Gen 0 haben viele Schlagfolgen). Lauf 13 misst den korrigierten
+  Stand: gleich stark wie Lauf 12, ~110 CPU-s teurer – der Fehler hat also nicht messbar geschadet.
+- Seit Lauf 1: etwa dieselbe Stärke mit ~1800 statt 4824 CPU-s – gut ein Drittel.
 - Nebenwirkung: Findet das Tuning in 30 Epochen nichts Besseres, bleibt die Generation unverändert (Gen 8 = Gen 7
   in Lauf 12) – das wirkt wie ein eingebautes Gate.
+- Der Leaf-Cache (`FILE.leaves`, Version 2) trägt eine Prüfsumme und das Knotenlimit der Auflösung; beschädigte oder
+  veraltete Caches werden neu berechnet.
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 

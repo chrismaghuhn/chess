@@ -10,7 +10,7 @@
 #   LAMBDA [0] weight of self-play search scores in the tuner's target (data v2)
 #   RESIGN [off] calibrated resignation in self-play (on/off)
 #   TUNER_FAST [on] cheaper tuning: stop after 30 epochs without improvement, and resolve
-#                   each data file's quiet leaves only once (cached next to it); -41% CPU at the
+#                   each data file's quiet leaves only once (cached next to it); -37% CPU at the
 #                   same strength (M11). Runs started without it [off] continue without it.
 #   THREADS [all cores]                            ENGINE, TUNER: binaries
 #

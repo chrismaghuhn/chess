@@ -103,4 +103,43 @@
 <text x="525.9" y="48.0" fill="#dc2626">12</text>
 <line x1="610" y1="74" x2="630" y2="74" stroke="#dc2626" stroke-width="3"/>
 <text x="636" y="78">run12-fast</text>
+<polyline points="107.3,448.4 189.1,348.0 222.4,301.1 256.9,241.4 292.9,207.1 329.0,163.0 363.9,138.7 397.3,113.3 433.5,86.0 475.6,70.2 511.2,46.7 548.0,53.1" fill="none" stroke="#16a34a" stroke-width="2"/>
+<line x1="107.3" y1="496.5" x2="107.3" y2="400.2" stroke="#16a34a" stroke-opacity="0.4"/>
+<circle cx="107.3" cy="448.4" r="4" fill="#16a34a"/>
+<text x="113.3" y="442.4" fill="#16a34a">1</text>
+<line x1="189.1" y1="377.2" x2="189.1" y2="318.8" stroke="#16a34a" stroke-opacity="0.4"/>
+<circle cx="189.1" cy="348.0" r="4" fill="#16a34a"/>
+<text x="195.1" y="342.0" fill="#16a34a">2</text>
+<line x1="222.4" y1="324.5" x2="222.4" y2="277.8" stroke="#16a34a" stroke-opacity="0.4"/>
+<circle cx="222.4" cy="301.1" r="4" fill="#16a34a"/>
+<text x="228.4" y="295.1" fill="#16a34a">3</text>
+<line x1="256.9" y1="260.0" x2="256.9" y2="222.9" stroke="#16a34a" stroke-opacity="0.4"/>
+<circle cx="256.9" cy="241.4" r="4" fill="#16a34a"/>
+<text x="262.9" y="235.4" fill="#16a34a">4</text>
+<line x1="292.9" y1="223.7" x2="292.9" y2="190.5" stroke="#16a34a" stroke-opacity="0.4"/>
+<circle cx="292.9" cy="207.1" r="4" fill="#16a34a"/>
+<text x="298.9" y="201.1" fill="#16a34a">5</text>
+<line x1="329.0" y1="177.5" x2="329.0" y2="148.5" stroke="#16a34a" stroke-opacity="0.4"/>
+<circle cx="329.0" cy="163.0" r="4" fill="#16a34a"/>
+<text x="335.0" y="157.0" fill="#16a34a">6</text>
+<line x1="363.9" y1="152.3" x2="363.9" y2="125.1" stroke="#16a34a" stroke-opacity="0.4"/>
+<circle cx="363.9" cy="138.7" r="4" fill="#16a34a"/>
+<text x="369.9" y="132.7" fill="#16a34a">7</text>
+<line x1="397.3" y1="126.2" x2="397.3" y2="100.5" stroke="#16a34a" stroke-opacity="0.4"/>
+<circle cx="397.3" cy="113.3" r="4" fill="#16a34a"/>
+<text x="403.3" y="107.3" fill="#16a34a">8</text>
+<line x1="433.5" y1="98.3" x2="433.5" y2="73.6" stroke="#16a34a" stroke-opacity="0.4"/>
+<circle cx="433.5" cy="86.0" r="4" fill="#16a34a"/>
+<text x="439.5" y="80.0" fill="#16a34a">9</text>
+<line x1="475.6" y1="82.6" x2="475.6" y2="57.9" stroke="#16a34a" stroke-opacity="0.4"/>
+<circle cx="475.6" cy="70.2" r="4" fill="#16a34a"/>
+<text x="481.6" y="64.2" fill="#16a34a">10</text>
+<line x1="511.2" y1="58.9" x2="511.2" y2="34.4" stroke="#16a34a" stroke-opacity="0.4"/>
+<circle cx="511.2" cy="46.7" r="4" fill="#16a34a"/>
+<text x="517.2" y="40.7" fill="#16a34a">11</text>
+<line x1="548.0" y1="65.4" x2="548.0" y2="40.8" stroke="#16a34a" stroke-opacity="0.4"/>
+<circle cx="548.0" cy="53.1" r="4" fill="#16a34a"/>
+<text x="554.0" y="47.1" fill="#16a34a">12</text>
+<line x1="610" y1="92" x2="630" y2="92" stroke="#16a34a" stroke-width="3"/>
+<text x="636" y="96">run13-fast</text>
 </svg>

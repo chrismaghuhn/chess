@@ -1,0 +1,2 @@
+runs/run13-fast/weights/gen5.bin vs zero: +398 =1 -1, score 99.6%, Elo +970 +/- 174
+summary games=400 a_wins=398 draws=1 b_wins=1 score=0.9962 elo=969.7 elo_err=174.2 saturated=0 cpu_s=8.133 wall_s=0.629
