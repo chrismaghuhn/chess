@@ -105,6 +105,9 @@ static const char *invalid_fens[] = {
     "4k3/8/8/8/8/8/8/4K2P w - - 0 1",                                   /* pawn on rank 1 */
     "4k3/8/8/8/8/8/8/4K3 b - e3 0 1",                                   /* ep without pawn */
     "4k3/8/8/8/8/8/4Q3/4K3 w - - 0 1",                                  /* side not to move in check */
+    "4k3/8/8/8/8/8/8/4K3 w - e30 1",                                    /* junk after ep square */
+    "4k3/8/8/8/8/8/8/4K3 w - - 0 1 2",                                  /* too many counters */
+    "qqqqk3/qqqqqq2/8/8/8/8/6PP/6RK b - - 0 1",                         /* 10 queens */
 };
 
 /* FENs that are valid but get normalized: { input, expected output }. */
@@ -113,6 +116,10 @@ static const char *normalized_fens[][2] = {
     { "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
       "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1" },
     { "4k3/8/8/8/8/8/8/4K3 w - -", "4k3/8/8/8/8/8/8/4K3 w - - 0 1" },
+    { "4k3/8/8/8/8/8/8/4K3 w - - ", "4k3/8/8/8/8/8/8/4K3 w - - 0 1" },
+    { "4k3/8/8/8/8/8/8/4K3 w - - 3 0", "4k3/8/8/8/8/8/8/4K3 w - - 3 1" },
+    /* Nine queens are fine if all eight pawns promoted. */
+    { "qqqqk3/qqqqq3/8/8/8/8/6PP/6RK b - - 0 1", "qqqqk3/qqqqq3/8/8/8/8/6PP/6RK b - - 0 1" },
 };
 
 #define COUNT(a) (int)(sizeof(a) / sizeof((a)[0]))
@@ -177,7 +184,11 @@ static int test_perft(uint64_t max_nodes) {
             continue;
 
         Board b;
-        board_from_fen(&b, c->fen);
+        if (!board_from_fen(&b, c->fen)) {
+            printf("FAIL %-22s d%d  invalid FEN\n", c->name, c->depth);
+            failures++;
+            continue;
+        }
         double start = now();
         uint64_t nodes = perft(&b, c->depth);
         double elapsed = now() - start;
@@ -201,6 +212,10 @@ static int test_perft(uint64_t max_nodes) {
 
 static int divide(int argc, char **argv) {
     int depth = atoi(argv[2]);
+    if (depth < 1) {
+        fprintf(stderr, "depth must be at least 1\n");
+        return 2;
+    }
     char fen[256] = "";
     size_t len = 0;
     for (int i = 3; i < argc && len < sizeof fen; i++)

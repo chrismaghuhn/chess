@@ -3,9 +3,15 @@
 
 #include "board.h"
 
-/* No legal chess position has more than 218 moves. */
+/*
+ * No legal chess position has more than 218 moves. Pseudo-legal moves can be
+ * more; with the piece counts board_from_fen allows (at most 9 queens, 2 rooks,
+ * 2 bishops, 2 knights) the bound is 9*27 + 2*14 + 2*13 + 2*8 + 8 + 2 = 323.
+ */
+#define MAX_MOVES 324
+
 typedef struct {
-    Move moves[256];
+    Move moves[MAX_MOVES];
     int count;
 } MoveList;
 

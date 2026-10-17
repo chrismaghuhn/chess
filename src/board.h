@@ -35,7 +35,9 @@ void board_to_fen(const Board *b, char *buf, size_t size);
 
 /*
  * Plays a pseudo-legal move on a copy of b. Returns false if the move
- * leaves the mover's king in check; out is then garbage.
+ * leaves the mover's king in check; out is then garbage. The move must come
+ * from movegen_generate for this position: moves from outside (UCI) have to
+ * be matched against the generated list first.
  */
 bool board_make_move(const Board *b, Move m, Board *out);
 

@@ -1,5 +1,6 @@
 #include "board.h"
 
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -76,6 +77,7 @@ bool board_make_move(const Board *b, Move m, Board *out) {
 
     int us = b->side, them = us ^ 1;
     int from = move_from(m), to = move_to(m), flags = move_flags(m);
+    assert(b->squares[from] != NO_PIECE && piece_color(b->squares[from]) == us);
     int type = piece_type(b->squares[from]);
 
     if (n->ep != SQ_NONE) {
@@ -100,7 +102,8 @@ bool board_make_move(const Board *b, Move m, Board *out) {
     } else if (flags == MF_DOUBLE_PUSH) {
         /*
          * Only record the en passant square if an enemy pawn could take
-         * there, so equal positions get equal hashes for repetition checks.
+         * there, so that repetition checks see equal positions as equal.
+         * A pinned capturer still counts; that rare case is accepted.
          */
         int ep = (from + to) / 2;
         if (pawn_attacks[us][ep] & n->pieces[them][PAWN]) {
@@ -125,6 +128,20 @@ bool board_make_move(const Board *b, Move m, Board *out) {
         n->fullmove++;
 
     return !board_square_attacked(n, board_king_square(n, us), them);
+}
+
+static int excess(int count, int initial) {
+    return count > initial ? count - initial : 0;
+}
+
+/*
+ * Every piece beyond the starting set needs a promoted pawn. This also
+ * bounds the pseudo-legal move count below MAX_MOVES.
+ */
+static bool piece_counts_possible(const Bitboard *pieces) {
+    int promoted = excess(popcount(pieces[KNIGHT]), 2) + excess(popcount(pieces[BISHOP]), 2)
+                 + excess(popcount(pieces[ROOK]), 2) + excess(popcount(pieces[QUEEN]), 1);
+    return popcount(pieces[PAWN]) + promoted <= 8;
 }
 
 bool board_from_fen(Board *b, const char *fen) {
@@ -194,19 +211,24 @@ bool board_from_fen(Board *b, const char *fen) {
         b->ep = (uint8_t)make_square(p[0] - 'a', p[1] - '1');
         p += 2;
     }
+    if (*p && *p != ' ' && *p != '\n' && *p != '\r')
+        return false;
 
-    if (*p == ' ') {
+    /* Optional move counters. Some tools write fullmove 0; that becomes 1. */
+    while (*p == ' ')
+        p++;
+    if (*p >= '0' && *p <= '9') {
         char *end;
         long half = strtol(p, &end, 10);
-        if (end == p || half < 0 || half > 10000)
+        if (end == p || half > 10000)
             return false;
         p = end;
         long full = strtol(p, &end, 10);
-        if (end == p || full < 1 || full > 65535)
+        if (end == p || full < 0 || full > 65535)
             return false;
         p = end;
         b->halfmove = (uint16_t)half;
-        b->fullmove = (uint16_t)full;
+        b->fullmove = (uint16_t)(full ? full : 1);
     }
     while (*p == ' ' || *p == '\n' || *p == '\r')
         p++;
@@ -216,6 +238,8 @@ bool board_from_fen(Board *b, const char *fen) {
     /* Legality checks. */
     int us = b->side, them = us ^ 1;
     if (popcount(b->pieces[WHITE][KING]) != 1 || popcount(b->pieces[BLACK][KING]) != 1)
+        return false;
+    if (!piece_counts_possible(b->pieces[WHITE]) || !piece_counts_possible(b->pieces[BLACK]))
         return false;
     if ((b->pieces[WHITE][PAWN] | b->pieces[BLACK][PAWN]) & 0xFF000000000000FFULL)
         return false;

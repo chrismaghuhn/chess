@@ -1,8 +1,11 @@
 #include "movegen.h"
 
+#include <assert.h>
+
 #include "attacks.h"
 
 static inline void add(MoveList *list, int from, int to, int flags) {
+    assert(list->count < MAX_MOVES);
     list->moves[list->count++] = move_encode(from, to, flags);
 }
 

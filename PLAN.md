@@ -67,7 +67,7 @@ log/      generations.csv
 ### Board
 - 12 Bitboards (6 Figurentypen × 2 Farben) plus Belegungs-Bitboards
 - Seite am Zug, Rochaderechte (4 Bits), en-passant-Feld, Halbzugzähler, Zobrist-Hash
-- **Copy-Make**: Ein Zug erzeugt eine Kopie des Boards (~100 Bytes). Das ist einfacher als Make/Unmake und kaum langsamer.
+- **Copy-Make**: Ein Zug erzeugt eine Kopie des Boards (~200 Bytes). Das ist einfacher als Make/Unmake und kaum langsamer.
 
 ### Zuggenerierung
 - Pseudo-legale Züge erzeugen, nach dem Ausführen prüfen, ob der eigene König angegriffen ist
