@@ -109,24 +109,34 @@ static void cmd_position(Uci *u, char *args) {
 static void cmd_go(Uci *u, char *args) {
     search_limits_init(&u->limits);
     u->infinite = false;
+    bool limited = false;
 
+    /* A limit that is given but zero or negative means "as little as possible", never "none". */
     char *save;
     for (char *token = strtok_r(args, " \t", &save); token; token = strtok_r(NULL, " \t", &save)) {
         if (strcmp(token, "infinite") == 0) {
             u->infinite = true;
         } else if (strcmp(token, "depth") == 0) {
-            u->limits.depth = next_int(&save);
+            int depth = next_int(&save);
+            u->limits.depth = depth > 0 ? depth : 1;
+            limited = true;
         } else if (strcmp(token, "nodes") == 0) {
             char *value = strtok_r(NULL, " \t", &save);
-            u->limits.nodes = value ? strtoull(value, NULL, 10) : 0;
+            unsigned long long nodes = value ? strtoull(value, NULL, 10) : 0;
+            u->limits.nodes = nodes > 0 ? nodes : 1;
+            limited = true;
         } else if (strcmp(token, "movetime") == 0) {
-            u->limits.movetime = next_int(&save);
+            int movetime = next_int(&save);
+            u->limits.movetime = movetime > 0 ? movetime : 1;
+            limited = true;
         } else if (strcmp(token, "wtime") == 0) {
             int t = next_int(&save);
             u->limits.time[WHITE] = t > 0 ? t : 0;
+            limited = true;
         } else if (strcmp(token, "btime") == 0) {
             int t = next_int(&save);
             u->limits.time[BLACK] = t > 0 ? t : 0;
+            limited = true;
         } else if (strcmp(token, "winc") == 0) {
             u->limits.inc[WHITE] = next_int(&save);
         } else if (strcmp(token, "binc") == 0) {
@@ -140,6 +150,9 @@ static void cmd_go(Uci *u, char *args) {
             return;
         }
     }
+    /* A bare "go" searches until "stop". */
+    if (!limited)
+        u->infinite = true;
 
     atomic_store(&u->stop, false);
     u->limits.stop = &u->stop;

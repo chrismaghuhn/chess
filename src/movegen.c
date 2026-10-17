@@ -16,8 +16,12 @@ static void add_targets(MoveList *list, int from, Bitboard targets, Bitboard ene
     }
 }
 
+/*
+ * Knight, bishop, rook, queen: the order of the move encoding. A "queen
+ * first" order would be chess knowledge, because ties go to the first move.
+ */
 static void add_promotions(MoveList *list, int from, int to, int capture) {
-    for (int piece = 3; piece >= 0; piece--) /* queen first */
+    for (int piece = 0; piece < 4; piece++)
         add(list, from, to, MF_PROMO | capture | piece);
 }
 

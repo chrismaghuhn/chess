@@ -149,6 +149,31 @@ static void test_no_legal_moves(void) {
     CHECK(r.best == 0 && r.score == -SCORE_MATE, "mated: best %d score %d", r.best, r.score);
 }
 
+static bool play_moves(Game *g, const char *moves);
+
+/* With eval 0 a draw only shows against a mate score, so each case pits one against the other. */
+static void test_search_draws(void) {
+    Game game;
+    SearchResult r = search_fen("6k1/5ppp/8/8/8/8/8/R5K1 w - - 99 80", 4, &game);
+    CHECK(search_mate_moves(r.score) == 1, "mate on the 100th ply beats the 50-move rule (score %d)", r.score);
+
+    /* White's only move Kg1 runs into Rb1#, unless Kg1 repeats a position from the game. */
+    const char *lost = "7k/8/8/8/8/1r6/r7/7K w - - 0 1";
+    r = search_fen(lost, 4, &game);
+    CHECK(search_mate_moves(r.score) == -1, "lost position without history (score %d)", r.score);
+
+    Board b;
+    board_from_fen(&b, lost);
+    game_init(&game, &b);
+    play_moves(&game, "h1g1 h8g8 g1h1 g8h8");
+    SearchLimits limits;
+    search_limits_init(&limits);
+    limits.depth = 4;
+    search_clear(search);
+    r = search_run(search, &game, &limits, false);
+    CHECK(r.score == 0, "repetition with game history is a draw (score %d)", r.score);
+}
+
 /* Plays UCI moves; returns false if one is illegal. */
 static bool play_moves(Game *g, const char *moves) {
     char buf[512];
@@ -189,6 +214,18 @@ static void test_game_results(void) {
     CHECK(result_after("8/8/8/4k3/8/8/8/4KB2 w - - 0 1", "") == GAME_DRAW, "K+B vs K");
     CHECK(result_after("8/8/8/4k3/8/8/8/4KN2 w - - 0 1", "") == GAME_DRAW, "K+N vs K");
     CHECK(result_after("8/8/8/4k3/8/8/8/3NKN2 w - - 0 1", "") == GAME_ONGOING, "K+N+N vs K");
+
+    /* More reversible moves than the history holds: old hashes get dropped, nothing breaks. */
+    Board b;
+    Game g;
+    board_from_fen(&b, "4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
+    game_init(&g, &b);
+    bool ok = true;
+    for (int i = 0; i < 300 && ok; i++)
+        ok = play_moves(&g, "a1a2 e8d8 a2a1 d8e8");
+    CHECK(ok && g.count <= GAME_MAX_HISTORY && g.count > 0 && g.hashes[g.count - 1] == g.board.hash,
+          "history truncation (count %d)", g.count);
+    CHECK(game_result(&g) == GAME_DRAW, "long shuffle ends in a draw");
 }
 
 static uint64_t rng_state = 0x2545F4914F6CDD1DULL;
@@ -264,6 +301,7 @@ int main(void) {
 
     test_mates();
     test_no_legal_moves();
+    test_search_draws();
     test_game_results();
     test_legal_games();
 

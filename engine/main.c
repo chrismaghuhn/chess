@@ -56,8 +56,10 @@ int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     chess_init();
 
-    if (argc >= 2 && strcmp(argv[1], "bench") == 0)
-        return bench(argc >= 3 ? atoi(argv[2]) : BENCH_DEPTH);
+    if (argc >= 2 && strcmp(argv[1], "bench") == 0) {
+        int depth = argc >= 3 ? atoi(argv[2]) : BENCH_DEPTH;
+        return bench(depth > 0 ? depth : 1);
+    }
 
     uci_loop();
     return 0;

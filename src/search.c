@@ -120,6 +120,10 @@ static int score_from_tt(int score, int ply) {
 static void set_time_limits(Search *s, const SearchLimits *l, int side) {
     const double overhead = 0.02; /* GUI and pipe latency */
 
+    /* If the GUI only sends the other side's clock, assume ours is the same. */
+    if (l->time[side] < 0 && l->time[side ^ 1] >= 0)
+        side ^= 1;
+
     s->soft_limit = s->hard_limit = -1;
     if (l->movetime > 0) {
         s->soft_limit = s->hard_limit = max_d(0.001, l->movetime / 1000.0 - overhead);
@@ -145,10 +149,24 @@ static bool should_stop(Search *s) {
     return s->stopped;
 }
 
+static bool has_legal_move(const Board *b) {
+    MoveList list;
+    movegen_generate(b, &list);
+    for (int i = 0; i < list.count; i++) {
+        Board next;
+        if (board_make_move(b, list.moves[i], &next))
+            return true;
+    }
+    return false;
+}
+
 /* Draw by rule or repetition. Any repetition inside the search counts. */
 static bool is_draw(const Search *s, const Board *b) {
-    if (b->halfmove >= 100 || board_insufficient_material(b))
+    if (board_insufficient_material(b))
         return true;
+    /* Checkmate on the 100th ply still wins. */
+    if (b->halfmove >= 100)
+        return !board_in_check(b) || has_legal_move(b);
     int last = s->hash_count - 1;
     for (int i = last - 2; i >= 0 && last - i <= b->halfmove; i -= 2)
         if (s->hashes[i] == b->hash)
@@ -202,16 +220,28 @@ static int qsearch(Search *s, const Board *b, int alpha, int beta, int ply) {
         s->seldepth = ply;
     if (should_stop(s))
         return 0;
+    if (ply >= MAX_PLY - 1)
+        return eval_evaluate(b);
 
-    int best = eval_evaluate(b);
-    if (ply >= MAX_PLY - 1 || best >= beta)
-        return best;
-    if (best > alpha)
-        alpha = best;
+    /* In check there is no standing pat: try every evasion, none means mate. */
+    bool in_check = board_in_check(b);
+    int best;
+    if (in_check) {
+        best = -SCORE_MATE + ply;
+    } else {
+        best = eval_evaluate(b);
+        if (best >= beta)
+            return best;
+        if (best > alpha)
+            alpha = best;
+    }
 
     MoveList list;
     int scores[MAX_MOVES];
-    movegen_generate_noisy(b, &list);
+    if (in_check)
+        movegen_generate(b, &list);
+    else
+        movegen_generate_noisy(b, &list);
     score_moves(s, b, &list, scores, 0, ply);
 
     for (int i = 0; i < list.count; i++) {
@@ -237,6 +267,10 @@ static int qsearch(Search *s, const Board *b, int alpha, int beta, int ply) {
 static int negamax(Search *s, const Board *b, int depth, int alpha, int beta, int ply) {
     s->pv_len[ply] = 0;
 
+    bool root = ply == 0;
+    if (!root && is_draw(s, b))
+        return 0;
+
     bool in_check = board_in_check(b);
     if (in_check)
         depth++; /* never stop the search while in check */
@@ -247,10 +281,7 @@ static int negamax(Search *s, const Board *b, int depth, int alpha, int beta, in
     if (ply > s->seldepth)
         s->seldepth = ply;
 
-    bool root = ply == 0;
     if (!root) {
-        if (is_draw(s, b))
-            return 0;
         if (ply >= MAX_PLY - 1)
             return eval_evaluate(b);
         /* A mate found closer to the root can't be beaten here. */

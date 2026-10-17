@@ -14,6 +14,7 @@
 #include <time.h>
 
 #include "board.h"
+#include "movegen.h"
 #include "perft.h"
 
 typedef struct {
@@ -173,6 +174,55 @@ static int test_fens(void) {
     return failures;
 }
 
+/* The noisy generator must produce exactly the captures and promotions of the full one, in order. */
+static int test_noisy_movegen(void) {
+    uint64_t rng = 0x9E3779B97F4A7C15ULL;
+    int failures = 0, positions = 0;
+
+    for (int i = 0; i < COUNT(cases); i++) {
+        if (i > 0 && strcmp(cases[i].fen, cases[i - 1].fen) == 0)
+            continue;
+        for (int walk = 0; walk < 50; walk++) {
+            Board b;
+            board_from_fen(&b, cases[i].fen);
+            for (int ply = 0; ply < 60; ply++, positions++) {
+                MoveList all, noisy, legal = { .count = 0 };
+                movegen_generate(&b, &all);
+                movegen_generate_noisy(&b, &noisy);
+
+                int n = 0;
+                bool same = true;
+                for (int j = 0; j < all.count; j++) {
+                    Move m = all.moves[j];
+                    if (move_is_capture(m) || move_is_promo(m))
+                        same = same && n < noisy.count && noisy.moves[n++] == m;
+                    Board next;
+                    if (board_make_move(&b, m, &next))
+                        legal.moves[legal.count++] = m;
+                }
+                if (!same || n != noisy.count) {
+                    char fen[FEN_MAX];
+                    board_to_fen(&b, fen, sizeof fen);
+                    printf("FAIL noisy movegen: %s\n", fen);
+                    failures++;
+                    break;
+                }
+                if (!legal.count)
+                    break;
+
+                rng ^= rng << 13;
+                rng ^= rng >> 7;
+                rng ^= rng << 17;
+                Board next;
+                board_make_move(&b, legal.moves[rng % (uint64_t)legal.count], &next);
+                b = next;
+            }
+        }
+    }
+    printf("noisy movegen: %s (%d positions)\n\n", failures ? "FAILED" : "ok", positions);
+    return failures;
+}
+
 static int test_perft(uint64_t max_nodes) {
     int failures = 0;
     uint64_t total_nodes = 0;
@@ -249,7 +299,7 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    int failures = test_fens() + test_perft(max_nodes);
+    int failures = test_fens() + test_noisy_movegen() + test_perft(max_nodes);
     if (failures)
         printf("%d FAILED\n", failures);
     else

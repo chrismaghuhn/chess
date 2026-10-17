@@ -91,12 +91,13 @@ log/      generations.csv
 
 ### Suche
 - Negamax mit Alpha-Beta, Iterative Deepening
-- Quiescence Search (nur Schlagzüge und Umwandlungen)
+- Quiescence Search (nur Schlagzüge und Umwandlungen; im Schach alle Ausweichzüge, ohne Stand-Pat)
 - Transposition Table (ein Eintrag pro Slot, immer ersetzen)
 - Schach-Erweiterung: im Schach wird eine Halbzug tiefer gesucht
 - Zugsortierung **ohne Vorwissen**: TT-Zug, dann Schlagzüge und Umwandlungen, dann Killer-Züge,
   dann History-Heuristik. History und Killer lernt die Suche selbst. MVV-LVA (nach Figurenwert)
   wäre Vorwissen; das kommt erst, wenn die Figurenwerte aus den gelernten Gewichten stammen.
+  Umwandlungen werden in Kodierungsreihenfolge erzeugt (Springer zuerst), nicht „Dame zuerst“.
 - Später: Null-Move-Pruning, Late Move Reductions, Aspiration Windows
 - Remis-Erkennung: Patt, Wiederholung (in der Suche zählt schon die zweite), 50-Züge-Regel, ungenügendes Material
 - UCI: Suche im eigenen Thread; `go` mit depth, nodes, movetime, wtime/btime/winc/binc/movestogo, infinite, perft;
