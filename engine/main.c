@@ -9,6 +9,7 @@
 #include "board.h"
 #include "game.h"
 #include "search.h"
+#include "selfplay.h"
 #include "uci.h"
 
 #define BENCH_DEPTH 7
@@ -56,6 +57,10 @@ int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     chess_init();
 
+    if (argc >= 2 && strcmp(argv[1], "selfplay") == 0)
+        return selfplay_main(argc - 1, argv + 1);
+    if (argc >= 2 && strcmp(argv[1], "data-info") == 0)
+        return data_info_main(argc - 1, argv + 1);
     if (argc >= 2 && strcmp(argv[1], "bench") == 0) {
         int depth = argc >= 3 ? atoi(argv[2]) : BENCH_DEPTH;
         return bench(depth > 0 ? depth : 1);

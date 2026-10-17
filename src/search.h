@@ -4,6 +4,7 @@
 #include <stdatomic.h>
 #include <stddef.h>
 
+#include "eval.h"
 #include "game.h"
 
 #define MAX_PLY 128
@@ -19,6 +20,7 @@ typedef struct {
     int inc[2];        /* ms per move per color */
     int movestogo;     /* 0 = not given */
     atomic_bool *stop; /* optional; setting it to true aborts the search */
+    uint64_t seed;     /* nonzero: shuffle root moves so ties are broken at random */
 } SearchLimits;
 
 typedef struct {
@@ -37,6 +39,9 @@ bool search_resize(Search *s, size_t hash_mb);
 
 /* Forgets everything learned during earlier searches (new game). */
 void search_clear(Search *s);
+
+/* Evaluation weights to use; NULL means all zero. The caller keeps them alive. */
+void search_set_weights(Search *s, const Weights *weights);
 
 void search_limits_init(SearchLimits *limits);
 

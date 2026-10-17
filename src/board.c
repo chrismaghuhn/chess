@@ -151,96 +151,26 @@ static bool piece_counts_possible(const Bitboard *pieces) {
     return popcount(pieces[PAWN]) + promoted <= 8;
 }
 
-bool board_from_fen(Board *b, const char *fen) {
+bool board_setup(Board *b, const uint8_t squares[64], int side, int castling, int ep,
+                 int halfmove, int fullmove) {
+    if ((side != WHITE && side != BLACK) || castling < 0 || castling > 15
+        || ep < 0 || ep > SQ_NONE || halfmove < 0 || halfmove > 10000
+        || fullmove < 1 || fullmove > 65535)
+        return false;
+
     memset(b, 0, sizeof *b);
     memset(b->squares, NO_PIECE, sizeof b->squares);
-    b->ep = SQ_NONE;
-    b->fullmove = 1;
-
-    const char *p = fen;
-
-    /* Piece placement, from rank 8 down to rank 1. */
-    int rank = 7, file = 0;
-    for (; *p && *p != ' '; p++) {
-        if (*p == '/') {
-            if (file != 8 || rank == 0)
-                return false;
-            rank--;
-            file = 0;
-        } else if (*p >= '1' && *p <= '8') {
-            file += *p - '0';
-            if (file > 8)
-                return false;
-        } else {
-            const char *pc = strchr(piece_chars, *p);
-            if (!pc || file > 7)
-                return false;
-            put_piece(b, (int)(pc - piece_chars), make_square(file, rank));
-            file++;
-        }
-    }
-    if (rank != 0 || file != 8)
-        return false;
-
-    if (*p++ != ' ')
-        return false;
-    if (*p == 'w')
-        b->side = WHITE;
-    else if (*p == 'b')
-        b->side = BLACK;
-    else
-        return false;
-    p++;
-
-    if (*p++ != ' ')
-        return false;
-    if (*p == '-') {
-        p++;
-    } else {
-        for (; *p && *p != ' '; p++) {
-            switch (*p) {
-            case 'K': b->castling |= WHITE_OO; break;
-            case 'Q': b->castling |= WHITE_OOO; break;
-            case 'k': b->castling |= BLACK_OO; break;
-            case 'q': b->castling |= BLACK_OOO; break;
-            default: return false;
-            }
-        }
-    }
-
-    if (*p++ != ' ')
-        return false;
-    if (*p == '-') {
-        p++;
-    } else {
-        if (p[0] < 'a' || p[0] > 'h' || (p[1] != '3' && p[1] != '6'))
+    for (int sq = 0; sq < 64; sq++) {
+        if (squares[sq] > NO_PIECE)
             return false;
-        b->ep = (uint8_t)make_square(p[0] - 'a', p[1] - '1');
-        p += 2;
+        if (squares[sq] != NO_PIECE)
+            put_piece(b, squares[sq], sq);
     }
-    if (*p && *p != ' ' && *p != '\n' && *p != '\r')
-        return false;
-
-    /* Optional move counters. Some tools write fullmove 0; that becomes 1. */
-    while (*p == ' ')
-        p++;
-    if (*p >= '0' && *p <= '9') {
-        char *end;
-        long half = strtol(p, &end, 10);
-        if (end == p || half > 10000)
-            return false;
-        p = end;
-        long full = strtol(p, &end, 10);
-        if (end == p || full < 0 || full > 65535)
-            return false;
-        p = end;
-        b->halfmove = (uint16_t)half;
-        b->fullmove = (uint16_t)(full ? full : 1);
-    }
-    while (*p == ' ' || *p == '\n' || *p == '\r')
-        p++;
-    if (*p)
-        return false;
+    b->side = (uint8_t)side;
+    b->castling = (uint8_t)castling;
+    b->ep = (uint8_t)ep;
+    b->halfmove = (uint16_t)halfmove;
+    b->fullmove = (uint16_t)fullmove;
 
     /* Legality checks. */
     int us = b->side, them = us ^ 1;
@@ -266,11 +196,11 @@ bool board_from_fen(Board *b, const char *fen) {
     if (b->squares[A8] != make_piece(BLACK, ROOK))
         b->castling &= ~BLACK_OOO;
 
-    if (b->ep != SQ_NONE) {
-        int ep = b->ep;
+    if (ep != SQ_NONE) {
+        if (rank_of(ep) != (us == WHITE ? 5 : 2))
+            return false;
         int origin = us == WHITE ? ep + 8 : ep - 8; /* where the pawn came from */
-        if (rank_of(ep) != (us == WHITE ? 5 : 2)
-            || b->squares[ep ^ 8] != make_piece(them, PAWN)
+        if (b->squares[ep ^ 8] != make_piece(them, PAWN)
             || b->squares[ep] != NO_PIECE || b->squares[origin] != NO_PIECE)
             return false;
         if (!(pawn_attacks[them][ep] & b->pieces[us][PAWN]))
@@ -279,6 +209,99 @@ bool board_from_fen(Board *b, const char *fen) {
 
     b->hash = board_compute_hash(b);
     return true;
+}
+
+bool board_from_fen(Board *b, const char *fen) {
+    uint8_t squares[64];
+    memset(squares, NO_PIECE, sizeof squares);
+    int side, castling = 0, ep = SQ_NONE, halfmove = 0, fullmove = 1;
+
+    const char *p = fen;
+
+    /* Piece placement, from rank 8 down to rank 1. */
+    int rank = 7, file = 0;
+    for (; *p && *p != ' '; p++) {
+        if (*p == '/') {
+            if (file != 8 || rank == 0)
+                return false;
+            rank--;
+            file = 0;
+        } else if (*p >= '1' && *p <= '8') {
+            file += *p - '0';
+            if (file > 8)
+                return false;
+        } else {
+            const char *pc = strchr(piece_chars, *p);
+            if (!pc || file > 7)
+                return false;
+            squares[make_square(file, rank)] = (uint8_t)(pc - piece_chars);
+            file++;
+        }
+    }
+    if (rank != 0 || file != 8)
+        return false;
+
+    if (*p++ != ' ')
+        return false;
+    if (*p == 'w')
+        side = WHITE;
+    else if (*p == 'b')
+        side = BLACK;
+    else
+        return false;
+    p++;
+
+    if (*p++ != ' ')
+        return false;
+    if (*p == '-') {
+        p++;
+    } else {
+        for (; *p && *p != ' '; p++) {
+            switch (*p) {
+            case 'K': castling |= WHITE_OO; break;
+            case 'Q': castling |= WHITE_OOO; break;
+            case 'k': castling |= BLACK_OO; break;
+            case 'q': castling |= BLACK_OOO; break;
+            default: return false;
+            }
+        }
+    }
+
+    if (*p++ != ' ')
+        return false;
+    if (*p == '-') {
+        p++;
+    } else {
+        if (p[0] < 'a' || p[0] > 'h' || (p[1] != '3' && p[1] != '6'))
+            return false;
+        ep = make_square(p[0] - 'a', p[1] - '1');
+        p += 2;
+    }
+    if (*p && *p != ' ' && *p != '\n' && *p != '\r')
+        return false;
+
+    /* Optional move counters. Some tools write fullmove 0; that becomes 1. */
+    while (*p == ' ')
+        p++;
+    if (*p >= '0' && *p <= '9') {
+        char *end;
+        long half = strtol(p, &end, 10);
+        if (end == p || half > 10000)
+            return false;
+        p = end;
+        long full = strtol(p, &end, 10);
+        if (end == p || full < 0 || full > 65535)
+            return false;
+        p = end;
+        halfmove = (int)half;
+        fullmove = full ? (int)full : 1;
+    }
+    while (*p == ' ' || *p == '\n' || *p == '\r')
+        p++;
+    if (*p)
+        return false;
+
+    return board_setup(b, squares, side, castling, ep, halfmove, fullmove);
 }
 
 void board_to_fen(const Board *b, char *buf, size_t size) {

@@ -17,6 +17,14 @@ typedef struct {
 
 typedef enum { GAME_ONGOING, GAME_WHITE_WINS, GAME_BLACK_WINS, GAME_DRAW } GameResult;
 
+/* Why a game ended. END_PLY_LIMIT is not a chess rule; self-play uses it. */
+typedef enum {
+    END_NONE, END_MATE, END_STALEMATE, END_REPETITION, END_FIFTY_MOVES, END_MATERIAL, END_PLY_LIMIT,
+    END_COUNT
+} GameEnd;
+
+extern const char *const game_end_names[END_COUNT];
+
 void game_init(Game *g, const Board *b);
 
 /* Finds the legal move with this UCI name ("e2e4", "e7e8q"). */
@@ -30,5 +38,8 @@ bool game_play(Game *g, Move m);
 
 /* Mate, stalemate, threefold repetition, 50-move rule, insufficient material. */
 GameResult game_result(const Game *g);
+
+/* Like game_result, also says why the game ended (END_NONE while ongoing). */
+GameResult game_result_detail(const Game *g, GameEnd *end);
 
 #endif

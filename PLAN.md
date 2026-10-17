@@ -44,10 +44,10 @@ src/      gemeinsame Bibliothek (Engine und Tuner)
           eval.[ch]      lineare Bewertung, lädt Gewichtsdatei (Gen 0: immer 0)
           search.[ch]    Negamax/Alpha-Beta, Quiescence, TT, Zugsortierung
           datafmt.[ch]   gepacktes Stellungsformat für Trainingsdaten
-engine/   main.c, uci.c, selfplay.c         → Binary `engine` (UCI; `engine bench [tiefe]`)
+engine/   main.c, uci.c, selfplay.c         → Binary `engine` (UCI; `bench`, `selfplay`, `data-info`)
 tuner/    main.c, texel.c                   → Binary `tuner`
 tests/    perft.c (Perft-Suite), search.c (Matt-Orakel, Remis, legale Partien),
-          uci.sh (UCI-Smoke-Test)           → `make test`
+          eval.c (Merkmale, Gewichte, Datenformat), uci.sh, selfplay.sh → `make test`
 tools/    plot.py (Python, nur Auswertung)
 weights/  Gewichtsdateien pro Generation
 data/     Trainingsdaten (nicht in git)
@@ -87,7 +87,11 @@ log/      generations.csv
 - Figurenwerte entstehen implizit als Mittelwert über die Felder
 - Bewusst **nicht** dabei: Mobilität, Königssicherheit, Bauernstruktur, Spielphase (tapered eval).
   Das kann später als zusätzliches Merkmal kommen, Werte immer gelernt.
-- Gewichtsdatei: Header (Magic, Version, Anzahl Merkmale) + float32-Gewichte; die Engine rundet auf int32
+- Gewichtsdatei: `SCHW`, Version, Anzahl Merkmale (je uint32 LE) + float32-Gewichte; die Engine rundet auf
+  int32 und kappt bei ±10000, die Bewertung bei ±20000 (weit weg von Matt-Werten). Laden per
+  `selfplay --weights FILE` oder UCI `setoption name Weights value FILE`; ohne Datei sind alle Gewichte 0.
+- Getestet: Startstellung ergibt für beliebige Gewichte 0, und Farbtausch + Spiegeln ändert die Bewertung nicht
+- Kosten: Die Bewertung summiert alle Merkmale neu (6,2 statt 8,8 Mio. Knoten/s). Inkrementell geht später.
 
 ### Suche
 - Negamax mit Alpha-Beta, Iterative Deepening
@@ -107,15 +111,38 @@ log/      generations.csv
 - Laufen direkt in der Engine (`engine selfplay ...`), mehrere Threads, ohne UCI-Overhead
 - **Feste Knotenzahl pro Zug** statt Zeit, damit der Aufwand reproduzierbar und vergleichbar ist
 - Eröffnungsvielfalt: die ersten 8 Halbzüge zufällig (gleichverteilt über legale Züge)
-- Kleines Rauschen bei gleichen Bewertungen, sonst spielt Gen 0 immer dieselbe Partie
+- Zufälliger Tie-Break: Die Wurzelzüge werden pro Zug mit einem Seed gemischt, gleich gut sortierte
+  Züge kommen so in zufälliger Reihenfolge dran (sonst spielt Gen 0 immer dieselbe Partie)
 - Partieende nur nach Regeln: Matt, Patt, Wiederholung, 50 Züge, ungenügendes Material,
   plus festes Zuglimit (z. B. 400 Halbzüge → Remis). **Nie** nach Material abbrechen, das wäre Vorwissen.
 - Gespeichert wird jede Stellung nach der Eröffnungsphase mit dem Endergebnis der Partie
+- **Reproduzierbar:** Partie i hat immer denselben Seed, Partien werden in Nummernreihenfolge geschrieben.
+  Gleicher Seed → bitgleiche Datei, egal mit wie vielen Threads (wird getestet).
+- Aufruf: `engine selfplay --out FILE [--games N] [--nodes N] [--threads N] [--weights FILE]
+  [--seed N] [--random-plies 8] [--max-plies 400] [--hash MB]`. Am Ende eine Zeile
+  `summary games=… positions=… nodes=… cpu_s=… wall_s=…` für das Generationen-Log.
+- `engine data-info FILE [n]` zeigt Ergebnisverteilung, Stellungen im Schach und n Beispiel-FENs
+- Erster Lauf (Gen 0, 200 Partien, 5000 Knoten/Zug, 8 Threads): 1,5 s Wandzeit, 12 s CPU,
+  15.469 Stellungen; 51 Partien durch Matt entschieden, der Rest meist Wiederholung
 
 ### Trainingsdaten-Format
-- Gepackte Stellung: Belegungs-Bitboard (8 Bytes) + 32 Nibbles für Figuren (16 Bytes)
-  + Seite am Zug, Rochade, en passant, Ergebnis (aus Sicht der Seite am Zug), Halbzug
-- ca. 32 Bytes pro Stellung → 10 Mio. Stellungen ≈ 320 MB
+- 16 Byte Header: `SCHD`, Version, Record-Größe, reserviert (je uint32 little-endian)
+- 32 Byte pro Stellung:
+
+  | Bytes | Inhalt |
+  |---|---|
+  | 0–7 | Belegungs-Bitboard |
+  | 8–23 | Figurencodes (0–11) der belegten Felder, niedrigstes Feld zuerst, 2 pro Byte |
+  | 24 | Seite am Zug |
+  | 25 | Rochaderechte |
+  | 26 | en-passant-Feld (64 = keins) |
+  | 27 | Halbzugzähler, gekappt bei 255 |
+  | 28 | Ergebnis aus Sicht der Seite am Zug: 0 verloren, 1 remis, 2 gewonnen |
+  | 29 | reserviert |
+  | 30–31 | Halbzug der Stellung in der Partie |
+
+- Beim Entpacken gelten dieselben Legalitätsprüfungen wie bei FEN (`board_setup`)
+- 10 Mio. Stellungen ≈ 320 MB
 
 ### Tuner (Texel-Tuning)
 - Liest gepackte Stellungen, löst sie per Quiescence Search mit den aktuellen Gewichten zu ruhigen Stellungen auf

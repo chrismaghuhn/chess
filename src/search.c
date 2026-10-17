@@ -10,6 +10,7 @@
 
 #include "eval.h"
 #include "movegen.h"
+#include "rng.h"
 #include "tt.h"
 
 #define HISTORY_MAX 16384
@@ -27,8 +28,11 @@ enum {
     ORDER_KILLER_2 = 1 << 18,
 };
 
+static const Weights zero_weights;
+
 struct Search {
     TT tt;
+    const Weights *weights;
     int history[2][64][64]; /* [side][from][to] */
 
     /* State of the current run. */
@@ -63,7 +67,12 @@ Search *search_new(size_t hash_mb) {
         free(s);
         return NULL;
     }
+    s->weights = &zero_weights;
     return s;
+}
+
+void search_set_weights(Search *s, const Weights *weights) {
+    s->weights = weights ? weights : &zero_weights;
 }
 
 void search_free(Search *s) {
@@ -221,7 +230,7 @@ static int qsearch(Search *s, const Board *b, int alpha, int beta, int ply) {
     if (should_stop(s))
         return 0;
     if (ply >= MAX_PLY - 1)
-        return eval_evaluate(b);
+        return eval_evaluate(s->weights, b);
 
     /* In check there is no standing pat: try every evasion, none means mate. */
     bool in_check = board_in_check(b);
@@ -229,7 +238,7 @@ static int qsearch(Search *s, const Board *b, int alpha, int beta, int ply) {
     if (in_check) {
         best = -SCORE_MATE + ply;
     } else {
-        best = eval_evaluate(b);
+        best = eval_evaluate(s->weights, b);
         if (best >= beta)
             return best;
         if (best > alpha)
@@ -283,7 +292,7 @@ static int negamax(Search *s, const Board *b, int depth, int alpha, int beta, in
 
     if (!root) {
         if (ply >= MAX_PLY - 1)
-            return eval_evaluate(b);
+            return eval_evaluate(s->weights, b);
         /* A mate found closer to the root can't be beaten here. */
         if (alpha < -SCORE_MATE + ply)
             alpha = -SCORE_MATE + ply;
@@ -310,6 +319,16 @@ static int negamax(Search *s, const Board *b, int depth, int alpha, int beta, in
     MoveList list;
     int scores[MAX_MOVES];
     movegen_generate(b, &list);
+    if (root && s->limits->seed) {
+        /* Equal ordering scores keep list order, so a shuffle breaks ties at random. */
+        uint64_t rng = s->limits->seed;
+        for (int i = list.count - 1; i > 0; i--) {
+            int j = (int)rng_below(&rng, (uint64_t)i + 1);
+            Move tmp = list.moves[i];
+            list.moves[i] = list.moves[j];
+            list.moves[j] = tmp;
+        }
+    }
     score_moves(s, b, &list, scores, hash_move, ply);
 
     int original_alpha = alpha;

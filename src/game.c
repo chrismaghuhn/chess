@@ -43,7 +43,11 @@ bool game_play(Game *g, Move m) {
     return true;
 }
 
-GameResult game_result(const Game *g) {
+const char *const game_end_names[END_COUNT] = {
+    "none", "mate", "stalemate", "repetition", "fifty-moves", "material", "ply-limit",
+};
+
+GameResult game_result_detail(const Game *g, GameEnd *end) {
     const Board *b = &g->board;
 
     MoveList list;
@@ -54,17 +58,36 @@ GameResult game_result(const Game *g) {
         has_move = board_make_move(b, list.moves[i], &next);
     }
     if (!has_move) {
-        if (!board_in_check(b))
+        if (!board_in_check(b)) {
+            *end = END_STALEMATE;
             return GAME_DRAW;
+        }
+        *end = END_MATE;
         return b->side == WHITE ? GAME_BLACK_WINS : GAME_WHITE_WINS;
     }
 
-    if (b->halfmove >= 100 || board_insufficient_material(b))
+    if (b->halfmove >= 100) {
+        *end = END_FIFTY_MOVES;
         return GAME_DRAW;
+    }
+    if (board_insufficient_material(b)) {
+        *end = END_MATERIAL;
+        return GAME_DRAW;
+    }
 
     int repetitions = 1, last = g->count - 1;
     for (int i = last - 2; i >= 0 && last - i <= b->halfmove; i -= 2)
         if (g->hashes[i] == b->hash)
             repetitions++;
-    return repetitions >= 3 ? GAME_DRAW : GAME_ONGOING;
+    if (repetitions >= 3) {
+        *end = END_REPETITION;
+        return GAME_DRAW;
+    }
+    *end = END_NONE;
+    return GAME_ONGOING;
+}
+
+GameResult game_result(const Game *g) {
+    GameEnd end;
+    return game_result_detail(g, &end);
 }

@@ -26,6 +26,7 @@
  */
 typedef struct {
     Game game;
+    Weights weights;
     Search *search;
     SearchLimits limits;
     atomic_bool stop;
@@ -173,10 +174,23 @@ static void cmd_setoption(Uci *u, char *args) {
     value = skip_spaces(value + strlen("value"));
     name[strcspn(name, " \t")] = '\0';
 
+    /* Values may contain spaces (file paths), so only trailing whitespace goes. */
+    size_t len = strlen(value);
+    while (len > 0 && (value[len - 1] == ' ' || value[len - 1] == '\t'))
+        value[--len] = '\0';
+
     if (strcasecmp(name, "Hash") == 0) {
         int mb = atoi(value);
         if (mb < 1 || mb > MAX_HASH_MB || !search_resize(u->search, (size_t)mb))
             printf("info string could not set Hash to %s\n", value);
+    } else if (strcasecmp(name, "Weights") == 0) {
+        char err[256];
+        if (len == 0 || strcmp(value, "<empty>") == 0)
+            weights_zero(&u->weights);
+        else if (weights_load(value, &u->weights, err, sizeof err))
+            printf("info string loaded weights %s\n", value);
+        else
+            printf("info string %s\n", err);
     } else {
         printf("info string unknown option %s\n", name);
     }
@@ -188,6 +202,7 @@ void uci_loop(void) {
         fprintf(stderr, "out of memory\n");
         exit(1);
     }
+    search_set_weights(u->search, &u->weights); /* zero until setoption Weights */
     Board start;
     board_from_fen(&start, START_FEN);
     game_init(&u->game, &start);
@@ -206,6 +221,7 @@ void uci_loop(void) {
             printf("id name " ENGINE_NAME "\n");
             printf("id author chrismaghuhn\n");
             printf("option name Hash type spin default %d min 1 max %d\n", DEFAULT_HASH_MB, MAX_HASH_MB);
+            printf("option name Weights type string default <empty>\n");
             printf("uciok\n");
         } else if (strcmp(command, "isready") == 0) {
             printf("readyok\n");

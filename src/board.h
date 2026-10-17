@@ -31,6 +31,10 @@ void chess_init(void);
  * squares are dropped, and so is an en passant square no pawn can capture on.
  */
 bool board_from_fen(Board *b, const char *fen);
+
+/* Builds a board from its parts with the same checks and normalization as board_from_fen. */
+bool board_setup(Board *b, const uint8_t squares[64], int side, int castling, int ep,
+                 int halfmove, int fullmove);
 void board_to_fen(const Board *b, char *buf, size_t size);
 
 /*
