@@ -63,10 +63,12 @@ bool search_parse_options(const char *text, unsigned *options);
 /*
  * Evaluate with this network instead of the linear weights (experiment); the
  * weights still provide the learned piece values for move ordering. NULL
- * switches back. The caller keeps it alive.
+ * switches back. The caller keeps it alive. The search uses an integer copy
+ * (nnue_quantize); false if the network cannot be stored that way or memory
+ * runs out, and the search then evaluates linearly.
  */
 typedef struct Network Network;
-void search_set_network(Search *s, const Network *net);
+bool search_set_network(Search *s, const Network *net);
 
 /* Evaluation weights to use; NULL means all zero. The caller keeps them alive. */
 void search_set_weights(Search *s, const Weights *weights);

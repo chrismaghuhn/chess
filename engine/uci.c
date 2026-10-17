@@ -213,8 +213,13 @@ static void cmd_setoption(Uci *u, char *args) {
                 nnue_free(&u->net);
             u->net = net;
             u->has_net = true;
-            search_set_network(u->search, &u->net);
-            printf("info string loaded network %s\n", value);
+            if (search_set_network(u->search, &u->net)) {
+                printf("info string loaded network %s\n", value);
+            } else {
+                printf("info string network %s cannot be used (weights too large or out of memory)\n", value);
+                nnue_free(&u->net);
+                u->has_net = false;
+            }
         } else {
             printf("info string %s\n", err);
             return;

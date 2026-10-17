@@ -4,6 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __AVX2__
+#include <immintrin.h>
+#endif
 
 int nnue_inputs(const Board *b, uint16_t out[NNUE_MAX_ACTIVE]) {
     int count = 0;
@@ -114,6 +117,178 @@ int nnue_evaluate(const Network *net, const Board *b) {
     uint16_t inputs[NNUE_MAX_ACTIVE];
     NnueCache cache;
     float score = nnue_forward(net, inputs, nnue_inputs(b, inputs), &cache);
+    if (!(score < EVAL_MAX))
+        return EVAL_MAX;
+    if (!(score > -EVAL_MAX))
+        return -EVAL_MAX;
+    return (int)lrintf(score);
+}
+
+/* ---- Integer form ---- */
+
+bool nnue_quantize(const Network *net, QNetwork *q) {
+    memset(q, 0, sizeof *q);
+    int H = net->hidden, P = (H + NNUE_LANES - 1) / NNUE_LANES * NNUE_LANES;
+    /* Largest possible accumulator: b1 plus the 32 largest rows of any unit. */
+    double bound = 1;
+    for (int h = 0; h < H; h++) {
+        float top[NNUE_MAX_ACTIVE] = { 0 };
+        for (int i = 0; i < NNUE_INPUTS; i++) {
+            float v = fabsf(net->w1[(size_t)i * (size_t)H + (size_t)h]);
+            for (int k = 0; k < NNUE_MAX_ACTIVE; k++)
+                if (v > top[k]) {
+                    float t = top[k];
+                    top[k] = v;
+                    v = t;
+                }
+        }
+        double sum = fabsf(net->b1[h]);
+        for (int k = 0; k < NNUE_MAX_ACTIVE; k++)
+            sum += top[k];
+        if (sum > bound)
+            bound = sum;
+    }
+    double qa = floor(32767.0 / bound);
+    if (qa > 4096)
+        qa = 4096;
+    /* Output sums: 2 * padded products of at most qa * 32767 must fit in int32. */
+    double w2_max = 0;
+    for (int h = 0; h < 2 * H; h++)
+        w2_max = fmax(w2_max, fabsf(net->w2[h]) * NNUE_QB);
+    if (qa < 64 || w2_max > 32767 || 2.0 * P * qa * w2_max > 2e9)
+        return false;
+
+    q->hidden = H;
+    q->padded = P;
+    q->qa = (int16_t)qa;
+    q->w1 = aligned_alloc(64, ((size_t)NNUE_INPUTS * (size_t)P * sizeof *q->w1 + 63) / 64 * 64);
+    q->b1 = aligned_alloc(64, ((size_t)P * sizeof *q->b1 + 63) / 64 * 64 + 64);
+    q->skip = calloc(NNUE_INPUTS, sizeof *q->skip);
+    q->w2 = aligned_alloc(64, ((size_t)2 * (size_t)P * sizeof *q->w2 + 63) / 64 * 64 + 64);
+    if (!q->w1 || !q->b1 || !q->skip || !q->w2) {
+        nnue_quantized_free(q);
+        return false;
+    }
+    for (int i = 0; i < NNUE_INPUTS; i++) {
+        q->skip[i] = (int32_t)lrint(net->skip[i] * NNUE_SKIP_UNITS);
+        for (int h = 0; h < P; h++)
+            q->w1[(size_t)i * (size_t)P + (size_t)h] =
+                (int16_t)(h < H ? lrint(net->w1[(size_t)i * (size_t)H + (size_t)h] * qa) : 0);
+    }
+    for (int h = 0; h < P; h++) {
+        q->b1[h] = (int16_t)(h < H ? lrint(net->b1[h] * qa) : 0);
+        for (int k = 0; k < 2; k++)
+            q->w2[k * P + h] = (int16_t)(h < H ? lrint(net->w2[k * H + h] * NNUE_QB) : 0);
+    }
+    q->b2 = net->b2 * NNUE_SCALE;
+    q->out_scale = (float)(NNUE_SCALE / (qa * NNUE_QB));
+    return true;
+}
+
+void nnue_quantized_free(QNetwork *q) {
+    free(q->w1);
+    free(q->b1);
+    free(q->skip);
+    free(q->w2);
+    memset(q, 0, sizeof *q);
+}
+
+static inline void acc_add(int16_t *restrict a, const int16_t *restrict row, int P) {
+    for (int h = 0; h < P; h += NNUE_LANES)
+        for (int k = 0; k < NNUE_LANES; k++)
+            a[h + k] = (int16_t)(a[h + k] + row[h + k]);
+}
+
+void nnue_refresh(const QNetwork *q, const Board *b, NnueAccumulator *a) {
+    int P = q->padded;
+    for (int persp = 0; persp < 2; persp++) {
+        memcpy(a->acc[persp], q->b1, (size_t)P * sizeof *q->b1);
+        a->skip[persp] = 0;
+        for (int color = 0; color < 2; color++)
+            for (int type = 0; type < 6; type++)
+                for (Bitboard bb = b->pieces[color][type]; bb;) {
+                    int input = nnue_input(persp, color, type, pop_lsb(&bb));
+                    acc_add(a->acc[persp], q->w1 + (size_t)input * (size_t)P, P);
+                    a->skip[persp] += q->skip[input];
+                }
+    }
+}
+
+void nnue_update(const QNetwork *q, const Board *before, const Board *after, const NnueAccumulator *from,
+                 NnueAccumulator *to) {
+    int P = q->padded;
+    /* The pieces the move took away and put down (at most 4 of each for one move). */
+    int gone[2][NNUE_MAX_ACTIVE], come[2][NNUE_MAX_ACTIVE], ng = 0, nc = 0;
+    for (int color = 0; color < 2; color++)
+        for (int type = 0; type < 6; type++) {
+            Bitboard changed = before->pieces[color][type] ^ after->pieces[color][type];
+            for (Bitboard bb = changed & before->pieces[color][type]; bb && ng < NNUE_MAX_ACTIVE; ng++) {
+                int sq = pop_lsb(&bb);
+                gone[WHITE][ng] = nnue_input(WHITE, color, type, sq);
+                gone[BLACK][ng] = nnue_input(BLACK, color, type, sq);
+            }
+            for (Bitboard bb = changed & after->pieces[color][type]; bb && nc < NNUE_MAX_ACTIVE; nc++) {
+                int sq = pop_lsb(&bb);
+                come[WHITE][nc] = nnue_input(WHITE, color, type, sq);
+                come[BLACK][nc] = nnue_input(BLACK, color, type, sq);
+            }
+        }
+    for (int persp = 0; persp < 2; persp++) {
+        int32_t skip = from->skip[persp];
+        const int16_t *src = from->acc[persp];
+        int16_t *dst = to->acc[persp];
+        for (int h = 0; h < P; h += NNUE_LANES) {
+            int16_t v[NNUE_LANES];
+            for (int k = 0; k < NNUE_LANES; k++)
+                v[k] = src[h + k];
+            for (int i = 0; i < ng; i++) {
+                const int16_t *row = q->w1 + (size_t)gone[persp][i] * (size_t)P + h;
+                for (int k = 0; k < NNUE_LANES; k++)
+                    v[k] = (int16_t)(v[k] - row[k]);
+            }
+            for (int i = 0; i < nc; i++) {
+                const int16_t *row = q->w1 + (size_t)come[persp][i] * (size_t)P + h;
+                for (int k = 0; k < NNUE_LANES; k++)
+                    v[k] = (int16_t)(v[k] + row[k]);
+            }
+            for (int k = 0; k < NNUE_LANES; k++)
+                dst[h + k] = v[k];
+        }
+        for (int i = 0; i < ng; i++)
+            skip -= q->skip[gone[persp][i]];
+        for (int i = 0; i < nc; i++)
+            skip += q->skip[come[persp][i]];
+        to->skip[persp] = skip;
+    }
+}
+
+/* Sum of clamp(acc, 0, qa) * w over padded values, exactly in int32. */
+static int32_t dot_clamped(const int16_t *acc, const int16_t *w, int P, int16_t qa) {
+#ifdef __AVX2__
+    __m256i zero = _mm256_setzero_si256(), top = _mm256_set1_epi16(qa), sum = _mm256_setzero_si256();
+    for (int h = 0; h < P; h += 16) {
+        __m256i x = _mm256_loadu_si256((const __m256i *)(acc + h));
+        x = _mm256_min_epi16(_mm256_max_epi16(x, zero), top);
+        sum = _mm256_add_epi32(sum, _mm256_madd_epi16(x, _mm256_loadu_si256((const __m256i *)(w + h))));
+    }
+    __m128i s = _mm_add_epi32(_mm256_castsi256_si128(sum), _mm256_extracti128_si256(sum, 1));
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, 0x4E));
+    s = _mm_add_epi32(s, _mm_shuffle_epi32(s, 0xB1));
+    return _mm_cvtsi128_si32(s);
+#else
+    int32_t sum = 0;
+    for (int h = 0; h < P; h++) {
+        int16_t x = acc[h] < 0 ? 0 : acc[h] > qa ? qa : acc[h];
+        sum += (int32_t)x * w[h];
+    }
+    return sum;
+#endif
+}
+
+int nnue_evaluate_quantized(const QNetwork *q, const NnueAccumulator *a, int side) {
+    int P = q->padded;
+    int32_t sum = dot_clamped(a->acc[side], q->w2, P, q->qa) + dot_clamped(a->acc[!side], q->w2 + P, P, q->qa);
+    float score = (float)a->skip[side] / NNUE_SKIP_UNITS + q->b2 + (float)sum * q->out_scale;
     if (!(score < EVAL_MAX))
         return EVAL_MAX;
     if (!(score > -EVAL_MAX))

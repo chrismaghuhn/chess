@@ -130,8 +130,10 @@ static void *worker(void *arg) {
     for (int k = 0; k < 2; k++) {
         search_set_weights(searchers[k], &m->weights[k]);
         search_set_options(searchers[k], c->options[k]);
-        if (m->has_network[k])
-            search_set_network(searchers[k], &m->networks[k]);
+        if (m->has_network[k] && !search_set_network(searchers[k], &m->networks[k])) {
+            fprintf(stderr, "network for side %c cannot be used (weights too large or out of memory)\n", "ab"[k]);
+            exit(1);
+        }
     }
 
     UciPeer peer, *peer_ptr = NULL;
