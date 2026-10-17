@@ -421,6 +421,20 @@ Anker-Matches (das Gate selbst überschätzt die Fortschritte).
 und trainieren auf einer Mischung aus Bewertung und Ergebnis – ein Label pro Stellung statt pro Partie, deutlich
 dateneffizienter (erlaubt, weil es unsere eigenen Daten sind).
 
+### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
+
+- **Suchbewertung als Label** (λ-Mischung aus Suchwert und Ergebnis): Standard im NNUE-Training von Stockfish
+  ([nnue-pytorch](https://github.com/official-stockfish/nnue-pytorch/blob/master/docs/nnue.md),
+  [nodchip learn.md](https://github.com/nodchip/Stockfish/blob/master/docs/learn.md)); Klassiker für Alpha-Beta-Engines:
+  TDLeaf(λ) (KnightCap). Gebootstrappte Werte lernten in [Boige et al. 2026](https://arxiv.org/abs/2609.09094)
+  (Vier gewinnt, Hex) genauere Bewertungen als AlphaZero, billiger. → Datenformat v2.
+- **Entschiedene Partien früh beenden:** kalibrierte Aufgabe-Schwelle, 20 % der Partien geben nie auf und messen die
+  Fehlerrate (≤ 2,5 %); am Zuglimit Suchwert statt „remis“ als Ziel ([Braun 2026](https://arxiv.org/abs/2609.37447)).
+- **Neustarts aus lehrreichen Stellungen:** die Hälfte der Partien startet an archivierten Stellungen, bevorzugt dort,
+  wo die Suche die Bewertung stark korrigiert hat, mit einem anderen Zug (Braun 2026).
+- **Gemischte Suchbudgets** (KataGo, [Wu](https://arxiv.org/pdf/1902.10565)): bei Braun für Schach verworfen; bei
+  Ergebnis-Labels für uns unpassend.
+
 ## Ergebnisse
 
 ### Lauf 1 (`runs/run1`): 8 Generationen, je 2000 Selbstpartien, 5000 Knoten/Zug, Matches mit 400 Partien
