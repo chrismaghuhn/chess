@@ -1,0 +1,2 @@
+runs/run11-l02/weights/gen2.bin vs zero: +397 =1 -2, score 99.4%, Elo +881 +/- 208
+summary games=400 a_wins=397 draws=1 b_wins=2 score=0.9938 elo=880.6 elo_err=208.2 saturated=0 cpu_s=8.873 wall_s=0.963

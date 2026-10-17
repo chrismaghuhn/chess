@@ -1,0 +1,2 @@
+runs/run9-v2/weights/gen3.bin vs zero: +396 =0 -4, score 99.0%, Elo +798 +/- 241
+summary games=400 a_wins=396 draws=0 b_wins=4 score=0.9900 elo=798.3 elo_err=241.4 saturated=0 cpu_s=9.448 wall_s=1.000

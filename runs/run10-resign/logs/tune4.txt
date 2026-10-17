@@ -1,0 +1,2 @@
+pieces P=53 N=57 B=68 R=145 Q=286 K=-3  (pawn = 1: N=1.08 B=1.29 R=2.76 Q=5.45)
+summary positions=873067 train=788885 validation=84182 start_train_loss=0.138072 start_val_loss=0.144724 train_loss=0.137152 val_loss=0.142527 best_epoch=58 epochs=400 unresolved=346 quiet_nodes=230054265 cpu_s=133.869 wall_s=13.096

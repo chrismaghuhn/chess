@@ -1,0 +1,2 @@
+runs/run11-l02/weights/gen4.bin vs runs/run4/weights/gen8.bin: +111 =47 -842, score 13.5%, Elo -323 +/- 30
+summary games=1000 a_wins=111 draws=47 b_wins=842 score=0.1345 elo=-323.4 elo_err=30.1 saturated=0 cpu_s=181.833 wall_s=16.940

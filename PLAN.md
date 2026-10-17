@@ -195,6 +195,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 7 | Knotenzahl pro Zug | welche Knotenzahl ergibt die meiste Stärke pro CPU-Sekunde Training |
 | 8 | Absolute Elo | Matches gegen Stockfish mit gedrosselter Stärke (nur Messung) |
 | 9 | NNUE (Experiment) | gestoppt: bessere Loss, aber schwächeres Spiel; Nebenbefund: lineares Modell auf allen Daten +97 Elo |
+| 10 | Daten v2: Suchbewertung als Label, kalibrierte Aufgabe | kein Gewinn (λ schadet, Aufgabe ~0); Entdeckung: Tuning ist >50 % der CPU |
 
 ### Meilenstein 5: Tempo
 
@@ -420,6 +421,35 @@ Anker-Matches (das Gate selbst überschätzt die Fortschritte).
 **Option für später:** Selbstpartien speichern zusätzlich die eigene Suchbewertung jeder Stellung (Datenformat v2)
 und trainieren auf einer Mischung aus Bewertung und Ergebnis – ein Label pro Stellung statt pro Partie, deutlich
 dateneffizienter (erlaubt, weil es unsere eigenen Daten sind).
+
+### Meilenstein 10: Datenformat v2 – Suchbewertung als Label, kalibrierte Aufgabe
+
+- **Datenformat v2** (36 Byte): zusätzlich die Suchbewertung der Selbstpartie (int16, Seite am Zug) und ein Flag,
+  ob sie gültig ist (nicht bei Gen 0). v1-Dateien bleiben lesbar (`data_read`).
+- **Tuner `--lambda`:** Ziel = λ · σ(Bewertung) + (1 − λ) · Ergebnis; Partien am Zuglimit nur Bewertung.
+- **Kalibrierte Aufgabe** (`selfplay --resign on`): Aufgabe, wenn beide Seiten 4 Halbzüge lang ≥ T gegen dieselbe
+  Seite bewerten; die ersten 20 % der Partien geben nie auf und bestimmen T (kleinstes aus 200…2000 mit
+  Fehlaufgaben-Rate ≤ 2,5 %, einseitige 95-%-Wilson-Schranke, ≥ 20 Fälle). Mit echten Gewichten: T = 300–600,
+  0–3 Fehlaufgaben auf ~300 Fälle.
+- `generations.sh`: `LAMBDA` (Standard 0), `RESIGN` (Standard off).
+
+| Lauf (12 Gen., 1500 Knoten, 2000 Partien) | Anker-Elo Gen 12 | CPU gesamt | Selbstpartien / Tuning |
+|---|---|---|---|
+| 7: nur Ergebnis | **−7** | 2882 s | 1344 / 1525 s |
+| 10: + Aufgabe | −13 | 2957 s | 1336 / 1608 s |
+| 11: + Aufgabe, λ = 0,2 | −25 | 3079 s | 1339 / 1729 s |
+| 9: + Aufgabe, λ = 0,5 | −116 | 3193 s | 1314 / 1866 s |
+
+- **λ schadet**, je mehr, desto mehr. Bei Stockfish liefert eine viel tiefere Suche die Labels; unsere
+  Selbstspiel-Suche (Tiefe ~4–5, Gewichte der Vorgeneration) ist als Lehrer kaum klüger als das Modell selbst –
+  das Modell lernt dann seine eigene Meinung nach statt echter Ergebnisse.
+- **Die Aufgabe spart über einen Lauf praktisch nichts** (bei 1500 Knoten sind die Restzüge entschiedener Partien billig).
+- **Entdeckung: Das Tuning ist inzwischen der größere Kostenblock (53–59 %).** Jede Generation löst *alle* bisherigen
+  Stellungen neu zu ruhigen Stellungen auf und trainiert fest 400 Epochen, obwohl die beste Epoche meist bei 50–100
+  liegt. Nächster Hebel: Tuning billiger machen (Early Stopping mit Geduld, aufgelöste Stellungen pro Datei
+  zwischenspeichern und nur neue Daten auflösen).
+- Grafik: `runs/v2-comparison.svg`. Format und Optionen bleiben (Standard aus); die gespeicherten Bewertungen werden
+  nützlich, falls Labels später aus tieferer Suche kommen.
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 

@@ -1,0 +1,2 @@
+runs/run10-resign/weights/gen11.bin vs runs/run10-resign/weights/gen10.bin: +172 =74 -154, score 52.2%, Elo +16 +/- 31
+summary games=400 a_wins=172 draws=74 b_wins=154 score=0.5225 elo=15.6 elo_err=30.8 saturated=0 cpu_s=26.114 wall_s=2.539
