@@ -51,7 +51,8 @@ static bool parse_double(const char *s, double *out) {
 
 static void usage(void) {
     fprintf(stderr, "usage: tuner --out FILE --data FILE [--data FILE ...] [--init FILE]\n"
-                    "             [--epochs N] [--lr X] [--threads N] [--val-every N] [--report N]\n");
+                    "             [--epochs N] [--lr X] [--threads N] [--val-every N] [--report N]\n"
+                    "             [--l2 X]\n");
 }
 
 /* Average weight of the features in [first, first + count) seen in training, one phase. */
@@ -124,6 +125,8 @@ int main(int argc, char **argv) {
             ok = parse_int(value, &val_every);
         else if (strcmp(key, "--report") == 0)
             ok = parse_int(value, &config.report_every);
+        else if (strcmp(key, "--l2") == 0)
+            ok = parse_double(value, &config.l2) || strcmp(value, "0") == 0;
         else
             ok = false;
         if (!ok) {

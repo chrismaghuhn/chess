@@ -1,0 +1,3 @@
+pieces P=30 N=24 B=27 R=66 Q=140 K=-5  (pawn = 1: N=0.78 B=0.89 R=2.18 Q=4.61)
+structure doubled=1/-10 isolated=-2/1 bishop-pair=-39/43 passed(rank 2..7, eg)=52,33,33,55,57,91
+summary positions=926619 train=833102 validation=93517 start_train_loss=0.134382 start_val_loss=0.133796 train_loss=0.133277 val_loss=0.132290 best_epoch=18 epochs=400 unresolved=502 quiet_nodes=288196222 cpu_s=198.496 wall_s=25.259

@@ -40,6 +40,7 @@ typedef struct {
     double learning_rate;
     int threads;
     int report_every; /* print losses to stderr every n epochs; 0 = never */
+    double l2;        /* adds l2 * sum(w^2) to the training loss; 0 = none */
 } TuneConfig;
 
 typedef struct {

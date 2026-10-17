@@ -296,6 +296,18 @@ static void evaluate(Epoch *e, const float *w, double grad[FEATURE_COUNT], doubl
         grad[k] /= d->train_count ? (double)d->train_count : 1.0;
 }
 
+/*
+ * L2 regularization: pulls weights towards 0. Game results label whole
+ * games, so the data holds far fewer independent samples than positions,
+ * and a richer feature set overfits without it. The reported losses stay
+ * the plain squared error.
+ */
+static void add_l2(double l2, const float *w, double grad[FEATURE_COUNT]) {
+    if (l2 > 0)
+        for (int k = 0; k < FEATURE_COUNT; k++)
+            grad[k] += 2.0 * l2 * w[k];
+}
+
 TuneResult tune_run(const TuneData *d, float w[FEATURE_COUNT], const TuneConfig *config) {
     const double beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8;
     bool has_validation = d->count > d->train_count;
@@ -310,6 +322,7 @@ TuneResult tune_run(const TuneData *d, float w[FEATURE_COUNT], const TuneConfig 
 
     TuneResult r;
     evaluate(e, w, grad, &r.start_train_loss, &r.start_val_loss);
+    add_l2(config->l2, w, grad);
     r.train_loss = r.start_train_loss;
     r.val_loss = r.start_val_loss;
     r.best_epoch = 0;
@@ -327,6 +340,7 @@ TuneResult tune_run(const TuneData *d, float w[FEATURE_COUNT], const TuneConfig 
 
         double train_loss, val_loss;
         evaluate(e, w, grad, &train_loss, &val_loss);
+        add_l2(config->l2, w, grad);
         bool better = has_validation ? val_loss < r.val_loss : true;
         if (better) {
             r.train_loss = train_loss;
