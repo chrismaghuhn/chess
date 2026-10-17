@@ -69,7 +69,7 @@ int main(int argc, char **argv) {
         int depth = argc >= 3 ? atoi(argv[2]) : BENCH_DEPTH;
         unsigned options = SEARCH_DEFAULT;
         if (argc >= 4 && !search_parse_options(argv[3], &options)) {
-            fprintf(stderr, "usage: engine bench [depth] [none|all|pvs,nmp,lmr]\n");
+            fprintf(stderr, "usage: engine bench [depth] [none | list of pvs,nmp,lmr,all,exact]\n");
             return 2;
         }
         return bench(depth > 0 ? depth : 1, options);

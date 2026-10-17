@@ -56,6 +56,15 @@ m4=$(timeout 60 "$engine" match --a "$tmp/tuned1.bin" --b zero --games 20 --node
 [ $(($(kv "$m1" a_wins) + $(kv "$m1" draws) + $(kv "$m1" b_wins))) -eq 20 ] || fail "match games do not add up"
 "$engine" match --games 3 2>/dev/null && fail "odd number of match games accepted"
 
+# Per-side node counts win over --nodes in any order.
+m_a=$(timeout 60 "$engine" match --a "$tmp/tuned1.bin" --games 4 --a-nodes 300 --nodes 600 --threads 2 --seed 3 2>/dev/null)
+m_b=$(timeout 60 "$engine" match --a "$tmp/tuned1.bin" --games 4 --nodes 600 --a-nodes 300 --threads 2 --seed 3 2>/dev/null)
+[ "$(kv "$m_a" a_wins)/$(kv "$m_a" b_wins)" = "$(kv "$m_b" a_wins)/$(kv "$m_b" b_wins)" ] \
+    || fail "match node flags depend on their order"
+
+# plot.py never writes over a CSV.
+python3 tools/plot.py "$tmp/x.csv" "$tmp/y.csv" 2>/dev/null && fail "plot accepted two CSVs without -o"
+
 # A one-sided match still gives a finite Elo and error, flagged as only a bound.
 side=$(timeout 60 "$engine" match --a "$tmp/tuned1.bin" --b "$tmp/tuned1.bin" --games 2 --nodes 300 2>/dev/null)
 for key in elo elo_err; do

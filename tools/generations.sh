@@ -12,7 +12,7 @@
 # Writes RUN_DIR/generations.csv; logs of every step go to RUN_DIR/logs.
 # Running it again skips steps whose log is complete, so an interrupted run
 # continues where it stopped. It refuses to continue with other GAMES, NODES,
-# MATCH_GAMES, EPOCHS or SEARCH than the run was started with (THREADS may change: the
+# MATCH_GAMES, EPOCHS, SEARCH or engine (search fingerprint) than the run was started with (THREADS may change: the
 # results do not depend on it). Once a step had to run, every later step runs
 # again too, so a redone step never mixes with stale results after it.
 #
@@ -45,7 +45,10 @@ TUNER=${TUNER:-build/release/tuner}
 mkdir -p "$run/data" "$run/weights" "$run/logs"
 csv="$run/generations.csv"
 
-settings="games=$GAMES nodes=$NODES match_games=$MATCH_GAMES epochs=$EPOCHS search=$SEARCH"
+# The engine's search fingerprint (bench node count) ties a run to the engine behavior that
+# produced it: a run cannot be continued by an engine that searches differently.
+fingerprint=$("$ENGINE" bench 7 "$SEARCH" | sed -n 's/^\([0-9]*\) nodes.*/\1/p')
+settings="games=$GAMES nodes=$NODES match_games=$MATCH_GAMES epochs=$EPOCHS search=$SEARCH engine=$fingerprint"
 if [ -f "$run/settings.txt" ]; then
     if [ "$(cat "$run/settings.txt")" != "$settings" ]; then
         echo "$run was started with: $(cat "$run/settings.txt")" >&2

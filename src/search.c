@@ -88,18 +88,17 @@ bool search_parse_options(const char *text, unsigned *options) {
         const char *name;
         unsigned flag;
     } names[] = { { "pvs", SEARCH_PVS }, { "nmp", SEARCH_NMP }, { "lmr", SEARCH_LMR },
-                  { "exact", SEARCH_EXACT_TIES } };
+                  { "all", SEARCH_ALL }, { "exact", SEARCH_EXACT_TIES } };
 
     *options = 0;
     if (strcmp(text, "none") == 0)
         return true;
-    if (strcmp(text, "all") == 0) {
-        *options = SEARCH_ALL;
-        return true;
-    }
+    if (!*text || strlen(text) >= 64)
+        return false;
     char buf[64];
     snprintf(buf, sizeof buf, "%s", text);
-    for (char *name = strtok(buf, ","); name; name = strtok(NULL, ",")) {
+    int count = 0;
+    for (char *name = strtok(buf, ","); name; name = strtok(NULL, ","), count++) {
         size_t i = 0;
         while (i < sizeof names / sizeof names[0] && strcmp(name, names[i].name) != 0)
             i++;
@@ -107,6 +106,8 @@ bool search_parse_options(const char *text, unsigned *options) {
             return false;
         *options |= names[i].flag;
     }
+    if (count == 0 || text[strlen(text) - 1] == ',' || text[0] == ',' || strstr(text, ",,"))
+        return false; /* empty entries */
     /* Null-move pruning and reductions rely on PVS's null-window searches. */
     return !(*options & (SEARCH_NMP | SEARCH_LMR)) || (*options & SEARCH_PVS);
 }

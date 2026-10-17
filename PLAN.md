@@ -241,7 +241,8 @@ Angriffe gleitender Figuren ~13 %, Legalitätsprüfung + Zug ausführen ~12 %, Z
     Überraschend: Der Halbzug mehr Tiefe ist kaum Elo wert, doppelte Knoten dagegen ~+150.
   - **Die Knotenzahl ist ein riesiger Stärkefaktor** (~+150 Elo pro Verdopplung). Ob mehr Knoten pro
     Zug auch besseres *Training* pro CPU-Sekunde ergeben, muss Lauf 2 zeigen.
-  - Bench jetzt mit Tiefe 10 und allen Verfahren (Fingerabdruck 5682804 Knoten bei Null-Gewichten).
+  - Bench jetzt mit Tiefe 8 und allen Verfahren (Fingerabdruck 10196665 Knoten bei Null-Gewichten);
+    `bench 7 exact` = 14201976 ist der Fingerabdruck der Trainings-Engine (gleich wie vor Meilenstein 5).
 - **D. Lauf 2** mit der schnellen Engine und gleichen Einstellungen; Kurve gegen Lauf 1 auf der CPU-Achse
 
   **Ergebnis Phase D** (Gewichte direkt gegeneinander, 5000 Knoten, 2000 Partien = ±14 Elo):
@@ -264,6 +265,8 @@ Angriffe gleitender Figuren ~13 %, Legalitätsprüfung + Zug ausführen ~12 %, Z
   - Konsequenz: Fürs Training ist `--search exact` Standard (`SEARCH` in `generations.sh`). Damit erzeugt
     die schnelle Engine bitgleich dieselben Daten wie die alte (geprüft an Gen-1-Daten von Lauf 1), mit
     ~21 % weniger CPU. PVS/NMP/LMR + Mischen bleiben Standard fürs Spielen (UCI).
+  - Läufe speichern den Such-Fingerabdruck der Engine in `settings.txt` und lassen sich nur mit einer
+    gleich suchenden Engine fortsetzen (Lauf 2/3 sind mit ihrer Engine abgeschlossen).
   - Lauf 4 bestätigt das: alle 8 Generationen, Gewichte und Elo-Werte identisch zu Lauf 1, 21 % weniger CPU
     (`runs/speed-comparison.svg`). **Meilenstein 5 erreicht.**
   - Nächste Hebel: mehr Ausdruckskraft der Bewertung (Merkmale), und die Frage nach der besten Knotenzahl

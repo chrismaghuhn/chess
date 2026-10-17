@@ -141,17 +141,37 @@ static void test_mates_with(unsigned options, const char *label) {
     }    search_set_options(search, SEARCH_DEFAULT);
 }
 
-/* Every search variant must still find exact mate distances. */
+/*
+ * Every search variant must still find exact mate distances, also with
+ * nonzero weights, where null-move pruning and the root shuffle are active.
+ */
 static void test_mates(void) {
-    test_mates_with(0, "plain alpha-beta");
-    test_mates_with(SEARCH_PVS, "pvs");
-    test_mates_with(SEARCH_ALL, "pvs+nmp+lmr");
+    Weights material;
+    weights_zero(&material);
+    static const int value[6] = { 100, 300, 300, 500, 900, 0 }; /* test fixture, not engine knowledge */
+    for (int type = 0; type < 6; type++)
+        for (int sq = 0; sq < 64; sq++)
+            material.w[type * 64 + sq] = value[type];
+
+    for (int weighted = 0; weighted < 2; weighted++) {
+        search_set_weights(search, weighted ? &material : NULL);
+        test_mates_with(0, weighted ? "plain, weights" : "plain alpha-beta");
+        test_mates_with(SEARCH_PVS, weighted ? "pvs, weights" : "pvs");
+        test_mates_with(SEARCH_ALL, weighted ? "pvs+nmp+lmr, weights" : "pvs+nmp+lmr");
+        test_mates_with(SEARCH_ALL | SEARCH_EXACT_TIES, weighted ? "all+exact, weights" : "all+exact");
+    }
+    search_set_weights(search, NULL);
 
     unsigned options;
     CHECK(search_parse_options("pvs,lmr", &options) && options == (SEARCH_PVS | SEARCH_LMR), "parse pvs,lmr");
     CHECK(search_parse_options("all", &options) && options == SEARCH_ALL, "parse all");
     CHECK(search_parse_options("none", &options) && options == 0, "parse none");
     CHECK(search_parse_options("exact", &options) && options == SEARCH_EXACT_TIES, "parse exact");
+    CHECK(search_parse_options("all,exact", &options) && options == (SEARCH_ALL | SEARCH_EXACT_TIES),
+          "parse all,exact");
+    CHECK(!search_parse_options("", &options), "empty options accepted");
+    CHECK(!search_parse_options("pvs,", &options), "trailing comma accepted");
+    CHECK(!search_parse_options("none,pvs", &options), "none in a list accepted");
     CHECK(!search_parse_options("nmp", &options), "nmp without pvs accepted");
     CHECK(!search_parse_options("pvs,fast", &options), "unknown option accepted");
 }

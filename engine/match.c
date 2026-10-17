@@ -191,6 +191,8 @@ int match_main(int argc, char **argv) {
         .seed = 1, .hash_mb = 4, .paths = { "zero", "zero" },
         .options = { SEARCH_DEFAULT, SEARCH_DEFAULT },
     };
+    /* --a-nodes / --b-nodes win over --nodes, whatever the order. */
+    uint64_t both_nodes = 0, side_nodes[2] = { 0, 0 };
     for (int i = 1; i < argc; i += 2) {
         const char *key = argv[i], *value = i + 1 < argc ? argv[i + 1] : NULL;
         int games = 0;
@@ -208,11 +210,11 @@ int match_main(int argc, char **argv) {
         else if (strcmp(key, "--games") == 0)
             ok = parse_int(value, &games) && games >= 2 && games % 2 == 0 && (c.pairs = games / 2);
         else if (strcmp(key, "--nodes") == 0)
-            ok = parse_u64(value, &c.nodes[0]) && c.nodes[0] > 0 && (c.nodes[1] = c.nodes[0]);
+            ok = parse_u64(value, &both_nodes) && both_nodes > 0;
         else if (strcmp(key, "--a-nodes") == 0)
-            ok = parse_u64(value, &c.nodes[0]) && c.nodes[0] > 0;
+            ok = parse_u64(value, &side_nodes[0]) && side_nodes[0] > 0;
         else if (strcmp(key, "--b-nodes") == 0)
-            ok = parse_u64(value, &c.nodes[1]) && c.nodes[1] > 0;
+            ok = parse_u64(value, &side_nodes[1]) && side_nodes[1] > 0;
         else if (strcmp(key, "--threads") == 0)
             ok = parse_int(value, &c.threads) && c.threads >= 1 && c.threads <= 256;
         else if (strcmp(key, "--seed") == 0)
@@ -231,6 +233,8 @@ int match_main(int argc, char **argv) {
             return 2;
         }
     }
+    for (int k = 0; k < 2; k++)
+        c.nodes[k] = side_nodes[k] ? side_nodes[k] : both_nodes ? both_nodes : c.nodes[k];
     if (c.max_plies <= c.random_plies) {
         usage();
         return 2;

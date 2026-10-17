@@ -2,7 +2,7 @@
 """Draws the training curve from generations.csv as an SVG, without extra packages.
 
 Usage: tools/plot.py RUN_DIR/generations.csv [OUT.svg]
-       tools/plot.py OUT.svg A/generations.csv B/generations.csv ...   (several runs in one plot)
+       tools/plot.py -o OUT.svg A/generations.csv B/generations.csv ...   (several runs in one plot)
 
 x: cumulative CPU seconds spent on self-play and tuning
 y: Elo chained over generations (each generation against the previous one),
@@ -35,14 +35,19 @@ def nice_ticks(low, high, count=6):
 
 def main():
     args = sys.argv[1:]
-    if not args:
+    out = None
+    if len(args) >= 2 and args[0] == "-o":
+        out, paths = args[1], args[2:]
+    elif len(args) == 2 and args[1].endswith(".svg"):
+        out, paths = args[1], args[:1]
+    elif len(args) == 1:
+        paths = args
+        out = args[0].rsplit(".", 1)[0] + ".svg"
+    else:
+        paths = []
+    if not paths or not out.endswith(".svg") or any(not p.endswith(".csv") for p in paths):
         print(__doc__.strip(), file=sys.stderr)
         sys.exit(2)
-    if args[0].endswith(".svg"):
-        out, paths = args[0], args[1:]
-    else:
-        paths = args[:1]
-        out = args[1] if len(args) == 2 else args[0].rsplit(".", 1)[0] + ".svg"
 
     runs = []
     for path in paths:
