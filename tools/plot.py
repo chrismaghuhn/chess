@@ -2,6 +2,7 @@
 """Draws the training curve from generations.csv as an SVG, without extra packages.
 
 Usage: tools/plot.py RUN_DIR/generations.csv [OUT.svg]
+       tools/plot.py OUT.svg A/generations.csv B/generations.csv ...   (several runs in one plot)
 
 x: cumulative CPU seconds spent on self-play and tuning
 y: Elo chained over generations (each generation against the previous one),
@@ -33,19 +34,28 @@ def nice_ticks(low, high, count=6):
 
 
 def main():
-    if len(sys.argv) not in (2, 3):
+    args = sys.argv[1:]
+    if not args:
         print(__doc__.strip(), file=sys.stderr)
         sys.exit(2)
-    path = sys.argv[1]
-    out = sys.argv[2] if len(sys.argv) == 3 else path.rsplit(".", 1)[0] + ".svg"
+    if args[0].endswith(".svg"):
+        out, paths = args[0], args[1:]
+    else:
+        paths = args[:1]
+        out = args[1] if len(args) == 2 else args[0].rsplit(".", 1)[0] + ".svg"
 
-    with open(path, newline="") as f:
-        rows = list(csv.DictReader(f))
-    points = [(float(r["cum_cpu_s"]), float(r["elo_chain"]), float(r["err_chain"]), r["gen"]) for r in rows]
+    runs = []
+    for path in paths:
+        with open(path, newline="") as f:
+            rows = list(csv.DictReader(f))
+        name = path.rstrip("/").split("/")[-2] if "/" in path else path
+        runs.append((name, [(float(r["cum_cpu_s"]), float(r["elo_chain"]), float(r["err_chain"]), r["gen"])
+                            for r in rows]))
 
-    xs = [p[0] for p in points]
-    lows = [p[1] - p[2] for p in points]
-    highs = [p[1] + p[2] for p in points]
+    every = [p for _, points in runs for p in points]
+    xs = [p[0] for p in every]
+    lows = [p[1] - p[2] for p in every]
+    highs = [p[1] + p[2] for p in every]
     x_ticks = nice_ticks(0, max(xs) or 1)
     y_ticks = nice_ticks(min(0, min(lows)), max(highs) or 1)
     x_max, y_min, y_max = x_ticks[-1], y_ticks[0], y_ticks[-1]
@@ -75,13 +85,21 @@ def main():
     parts.append(f'<text transform="translate(18 {(TOP + HEIGHT - BOTTOM) / 2}) rotate(-90)" '
                  'text-anchor="middle">Elo (chained, vs. gen 0)</text>')
 
-    line = " ".join(f"{sx(x):.1f},{sy(y):.1f}" for x, y, _, _ in points)
-    parts.append(f'<polyline points="{line}" fill="none" stroke="#2563eb" stroke-width="2"/>')
-    for x, y, err, gen in points:
-        parts.append(f'<line x1="{sx(x):.1f}" y1="{sy(y - err):.1f}" x2="{sx(x):.1f}" y2="{sy(y + err):.1f}" '
-                     'stroke="#2563eb" stroke-opacity="0.5"/>')
-        parts.append(f'<circle cx="{sx(x):.1f}" cy="{sy(y):.1f}" r="4" fill="#2563eb"/>')
-        parts.append(f'<text x="{sx(x) + 6:.1f}" y="{sy(y) - 6:.1f}">{gen}</text>')
+    colors = ["#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c"]
+    for k, (name, points) in enumerate(runs):
+        color = colors[k % len(colors)]
+        line = " ".join(f"{sx(x):.1f},{sy(y):.1f}" for x, y, _, _ in points)
+        parts.append(f'<polyline points="{line}" fill="none" stroke="{color}" stroke-width="2"/>')
+        for x, y, err, gen in points:
+            parts.append(f'<line x1="{sx(x):.1f}" y1="{sy(y - err):.1f}" x2="{sx(x):.1f}" y2="{sy(y + err):.1f}" '
+                         f'stroke="{color}" stroke-opacity="0.4"/>')
+            parts.append(f'<circle cx="{sx(x):.1f}" cy="{sy(y):.1f}" r="4" fill="{color}"/>')
+            parts.append(f'<text x="{sx(x) + 6:.1f}" y="{sy(y) - 6:.1f}" fill="{color}">{gen}</text>')
+        if len(runs) > 1:
+            ly = TOP + 16 + 18 * k
+            parts.append(f'<line x1="{WIDTH - RIGHT - 120}" y1="{ly}" x2="{WIDTH - RIGHT - 100}" y2="{ly}" '
+                         f'stroke="{color}" stroke-width="3"/>')
+            parts.append(f'<text x="{WIDTH - RIGHT - 94}" y="{ly + 4}">{name}</text>')
     parts.append("</svg>")
 
     with open(out, "w") as f:

@@ -244,6 +244,31 @@ Angriffe gleitender Figuren ~13 %, Legalitätsprüfung + Zug ausführen ~12 %, Z
   - Bench jetzt mit Tiefe 10 und allen Verfahren (Fingerabdruck 5682804 Knoten bei Null-Gewichten).
 - **D. Lauf 2** mit der schnellen Engine und gleichen Einstellungen; Kurve gegen Lauf 1 auf der CPU-Achse
 
+  **Ergebnis Phase D** (Gewichte direkt gegeneinander, 5000 Knoten, 2000 Partien = ±14 Elo):
+
+  | Lauf | Suche in den Selbstpartien | CPU für 8 Gen. | Gen 8 gegen Lauf 1 Gen 8 |
+  |---|---|---|---|
+  | 1 | alte Engine (exakte Gleichstände) | 4824 s | – |
+  | 2 | PVS+NMP+LMR, Mischen; NMP auch in Gen 0 (Fehler) | 3940 s | −20 |
+  | 3 | wie 2, ohne NMP in Gen 0 | 3962 s | −34 |
+  | 4 | `exact` (schnelle Engine, sonst wie Lauf 1) | **3802 s (−21 %)** | identisch (alle Gewichte bitgleich) |
+
+  - Lauf 2 und 3 sind gleich stark (±0), lernen pro Generation aber ~25 Elo weniger als Lauf 1.
+    Bei gleicher CPU-Zeit (Lauf 2/3 Gen 8 mit 3940 s gegen Lauf 1 Gen 7 mit 4184 s) sind sie gleich stark
+    (+5 / +1): Das Tempo wird von schlechteren Trainingsdaten aufgefressen. Vermutete Ursache: Das bloße
+    Mischen an der Wurzel macht die Selbstpartien weniger vielfältig als echte Zufalls-Gleichstände.
+  - Null-Move ist bei Null-Gewichten unsinnig (jede Stellung ist „≥ beta“) und nahm Gen 0 die Suche;
+    jetzt ist es dort aus.
+  - Das Early Stopping im Tuner wählt ab Gen ~3 praktisch zufällige Epochen: Die Validierungs-Loss ist
+    flach bis aufs Rauschen (~1e-4). Das lineare Modell ist an seiner Kapazitätsgrenze.
+  - Konsequenz: Fürs Training ist `--search exact` Standard (`SEARCH` in `generations.sh`). Damit erzeugt
+    die schnelle Engine bitgleich dieselben Daten wie die alte (geprüft an Gen-1-Daten von Lauf 1), mit
+    ~21 % weniger CPU. PVS/NMP/LMR + Mischen bleiben Standard fürs Spielen (UCI).
+  - Lauf 4 bestätigt das: alle 8 Generationen, Gewichte und Elo-Werte identisch zu Lauf 1, 21 % weniger CPU
+    (`runs/speed-comparison.svg`). **Meilenstein 5 erreicht.**
+  - Nächste Hebel: mehr Ausdruckskraft der Bewertung (Merkmale), und die Frage nach der besten Knotenzahl
+    pro Zug (doppelte Knoten ≈ +150 Elo Spielstärke, aber halb so viele Partien pro CPU-Sekunde).
+
 ## Ergebnisse
 
 ### Lauf 1 (`runs/run1`): 8 Generationen, je 2000 Selbstpartien, 5000 Knoten/Zug, Matches mit 400 Partien

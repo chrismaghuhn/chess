@@ -1,0 +1,4 @@
+games 2000, positions 233716, white wins 981, draws 257, black wins 762
+ends: mate 1743 stalemate 2 repetition 95 fifty-moves 65 material 95 ply-limit 0
+average 124.9 plies, 1160250729 nodes, cpu 382.53 s, wall 25.13 s
+summary games=2000 positions=233716 white_wins=981 draws=257 black_wins=762 plies=249716 nodes=1160250729 cpu_s=382.528 wall_s=25.131

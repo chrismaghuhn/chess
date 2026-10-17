@@ -151,6 +151,7 @@ static void test_mates(void) {
     CHECK(search_parse_options("pvs,lmr", &options) && options == (SEARCH_PVS | SEARCH_LMR), "parse pvs,lmr");
     CHECK(search_parse_options("all", &options) && options == SEARCH_ALL, "parse all");
     CHECK(search_parse_options("none", &options) && options == 0, "parse none");
+    CHECK(search_parse_options("exact", &options) && options == SEARCH_EXACT_TIES, "parse exact");
     CHECK(!search_parse_options("nmp", &options), "nmp without pvs accepted");
     CHECK(!search_parse_options("pvs,fast", &options), "unknown option accepted");
 }

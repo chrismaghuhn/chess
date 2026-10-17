@@ -1,0 +1,2 @@
+runs/run3/weights/gen6.bin vs runs/run3/weights/gen5.bin: +182 =66 -152, score 53.8%, Elo +26 +/- 31
+summary games=400 a_wins=182 draws=66 b_wins=152 score=0.5375 elo=26.1 elo_err=31.3 saturated=0 cpu_s=82.045 wall_s=5.538

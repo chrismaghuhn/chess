@@ -41,10 +41,13 @@ bool search_resize(Search *s, size_t hash_mb);
 void search_clear(Search *s);
 
 /*
- * Optional search techniques, all off by default: principal variation search,
- * null-move pruning, late move reductions. NMP and LMR need PVS.
+ * Optional search techniques: principal variation search, null-move
+ * pruning, late move reductions (NMP and LMR need PVS; "all" is these three),
+ * and "exact": with a seed, find exactly tied root moves and draw one at
+ * random even with learned weights (otherwise only with all weights 0) –
+ * costs depth, but self-play training learned more per game with it.
  */
-enum { SEARCH_PVS = 1, SEARCH_NMP = 2, SEARCH_LMR = 4, SEARCH_ALL = 7 };
+enum { SEARCH_PVS = 1, SEARCH_NMP = 2, SEARCH_LMR = 4, SEARCH_ALL = 7, SEARCH_EXACT_TIES = 8 };
 
 /* What the engine uses unless told otherwise (UCI, self-play, matches, bench). */
 #define SEARCH_DEFAULT ((unsigned)SEARCH_ALL)

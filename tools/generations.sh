@@ -6,12 +6,13 @@
 # Settings (environment, defaults in brackets):
 #   GAMES [2000] self-play games per generation    NODES [5000] nodes per move
 #   MATCH_GAMES [400] games per match              EPOCHS [400] tuner epochs
+#   SEARCH [exact] search options for self-play and matches (see engine match)
 #   THREADS [all cores]                            ENGINE, TUNER: binaries
 #
 # Writes RUN_DIR/generations.csv; logs of every step go to RUN_DIR/logs.
 # Running it again skips steps whose log is complete, so an interrupted run
 # continues where it stopped. It refuses to continue with other GAMES, NODES,
-# MATCH_GAMES or EPOCHS than the run was started with (THREADS may change: the
+# MATCH_GAMES, EPOCHS or SEARCH than the run was started with (THREADS may change: the
 # results do not depend on it). Once a step had to run, every later step runs
 # again too, so a redone step never mixes with stale results after it.
 #
@@ -36,6 +37,7 @@ GAMES=${GAMES:-2000}
 NODES=${NODES:-5000}
 MATCH_GAMES=${MATCH_GAMES:-400}
 EPOCHS=${EPOCHS:-400}
+SEARCH=${SEARCH:-exact}
 THREADS=${THREADS:-$(nproc)}
 ENGINE=${ENGINE:-build/release/engine}
 TUNER=${TUNER:-build/release/tuner}
@@ -43,7 +45,7 @@ TUNER=${TUNER:-build/release/tuner}
 mkdir -p "$run/data" "$run/weights" "$run/logs"
 csv="$run/generations.csv"
 
-settings="games=$GAMES nodes=$NODES match_games=$MATCH_GAMES epochs=$EPOCHS"
+settings="games=$GAMES nodes=$NODES match_games=$MATCH_GAMES epochs=$EPOCHS search=$SEARCH"
 if [ -f "$run/settings.txt" ]; then
     if [ "$(cat "$run/settings.txt")" != "$settings" ]; then
         echo "$run was started with: $(cat "$run/settings.txt")" >&2
@@ -80,7 +82,7 @@ weights() {
 
 match() { # match LOG A B
     step "$1" "$ENGINE" match --a "$2" --b "$3" --games "$MATCH_GAMES" --nodes "$NODES" \
-        --threads "$THREADS" --seed 7
+        --a-search "$SEARCH" --b-search "$SEARCH" --threads "$THREADS" --seed 7
 }
 
 echo "gen,games,positions,selfplay_cpu_s,tune_cpu_s,cum_cpu_s,val_loss,elo_vs_prev,err_vs_prev,elo_chain,err_chain,elo_vs_gen0,err_vs_gen0,pieces,notes" >"$csv"
@@ -98,10 +100,10 @@ for g in $(seq 1 "$gens"); do
     selfplay_log="$run/logs/selfplay$p.txt"
     if [ "$p" -eq 0 ]; then
         step "$selfplay_log" "$ENGINE" selfplay --games "$GAMES" --nodes "$NODES" --threads "$THREADS" \
-            --seed $((1000 + p)) --out "$run/data/gen$p.bin"
+            --seed $((1000 + p)) --search "$SEARCH" --out "$run/data/gen$p.bin"
     else
         step "$selfplay_log" "$ENGINE" selfplay --games "$GAMES" --nodes "$NODES" --threads "$THREADS" \
-            --seed $((1000 + p)) --out "$run/data/gen$p.bin" --weights "$(weights "$p")"
+            --seed $((1000 + p)) --search "$SEARCH" --out "$run/data/gen$p.bin" --weights "$(weights "$p")"
     fi
     data="$data --data $run/data/gen$p.bin"
 

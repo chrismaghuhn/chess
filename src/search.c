@@ -87,7 +87,8 @@ bool search_parse_options(const char *text, unsigned *options) {
     static const struct {
         const char *name;
         unsigned flag;
-    } names[] = { { "pvs", SEARCH_PVS }, { "nmp", SEARCH_NMP }, { "lmr", SEARCH_LMR } };
+    } names[] = { { "pvs", SEARCH_PVS }, { "nmp", SEARCH_NMP }, { "lmr", SEARCH_LMR },
+                  { "exact", SEARCH_EXACT_TIES } };
 
     *options = 0;
     if (strcmp(text, "none") == 0)
@@ -422,11 +423,13 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
      * Null-move pruning: if passing the move still leaves us at or above
      * beta in a shallower search, a real move will too. Only outside the
      * principal variation, not in check, and not with only king and pawns,
-     * where passing can be an advantage (zugzwang).
+     * where passing can be an advantage (zugzwang). Not in generation 0
+     * either: with all weights 0 every position is "at beta", passing would
+     * prune nearly everything, and gen 0 would play almost without search.
      */
     bool pv_node = beta - alpha > 1;
     const Bitboard *own = b->pieces[b->side];
-    if ((s->options & SEARCH_NMP) && !root && !pv_node && !in_check && depth >= 3
+    if ((s->options & SEARCH_NMP) && !s->zero_weights && !root && !pv_node && !in_check && depth >= 3
         && (own[KNIGHT] | own[BISHOP] | own[ROOK] | own[QUEEN])
         && eval_from_psq(psq, b->side) >= beta) {
         Board null;
@@ -444,7 +447,7 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
     MoveList list;
     int64_t scores[MAX_MOVES];
     movegen_generate(b, &list);
-    if (root && s->limits->seed && !s->zero_weights) {
+    if (root && s->limits->seed && !s->zero_weights && !(s->options & SEARCH_EXACT_TIES)) {
         uint64_t rng = s->limits->seed;
         for (int i = list.count - 1; i > 0; i--) {
             int j = (int)rng_below(&rng, (uint64_t)i + 1);
@@ -471,7 +474,8 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
      * before ordering is enough: equally ordered moves then come in random
      * order, at no cost.
      */
-    bool random_ties = root && s->limits->seed && s->zero_weights;
+    bool exact_ties = s->zero_weights || (s->options & SEARCH_EXACT_TIES);
+    bool random_ties = root && s->limits->seed && exact_ties;
     Move ties[MAX_MOVES];
     int tie_count = 0;
 

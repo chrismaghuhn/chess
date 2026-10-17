@@ -13,7 +13,7 @@
 #include "selfplay.h"
 #include "uci.h"
 
-#define BENCH_DEPTH 10
+#define BENCH_DEPTH 8
 
 static const char *bench_fens[] = {
     START_FEN,

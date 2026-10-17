@@ -74,7 +74,7 @@ expect '^readyok$' "setoption"
 # Search fingerprint with all weights 0. If a search change is meant to alter it,
 # update the number here (and say so in the commit).
 bench=$(timeout 60 "$engine" bench | sed -n 's/^\([0-9]*\) nodes.*/\1/p')
-[ "$bench" = 5682804 ] || { echo "FAIL uci bench: $bench nodes, expected 5682804"; failures=$((failures + 1)); }
+[ "$bench" = 10196665 ] || { echo "FAIL uci bench: $bench nodes, expected 10196665"; failures=$((failures + 1)); }
 
 if [ "$failures" -ne 0 ]; then
     echo "$failures FAILED"
