@@ -1,0 +1,1 @@
+summary hidden=0 train_games=104000 train_positions=11264945 start_val=0.126677 val=0.125424 start_test=0.127134 test=0.126069 best_epoch=16.0 cpu_s=587.6 wall_s=107.6

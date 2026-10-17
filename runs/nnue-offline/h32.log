@@ -1,0 +1,92 @@
+games train/val/test 104000/13000/13000, positions 11264945/1419903/1413510
+start: validation 0.132012 test 0.132490
+epoch   0.5  validation 0.125603  stuck units 0%  *
+epoch   1.0  validation 0.125439  stuck units 0%  *
+epoch 1  train 0.125048
+epoch   1.5  validation 0.124985  stuck units 0%  *
+epoch   2.0  validation 0.124835  stuck units 0%  *
+epoch 2  train 0.124147
+epoch   2.5  validation 0.124573  stuck units 0%  *
+epoch   3.0  validation 0.123583  stuck units 0%  *
+epoch 3  train 0.122973
+epoch   3.5  validation 0.121783  stuck units 0%  *
+epoch   4.0  validation 0.120582  stuck units 0%  *
+epoch 4  train 0.120097
+epoch   4.5  validation 0.119934  stuck units 0%  *
+epoch   5.0  validation 0.119430  stuck units 0%  *
+epoch 5  train 0.117599
+epoch   5.5  validation 0.119085  stuck units 0%  *
+epoch   6.0  validation 0.119212  stuck units 0%
+epoch 6  train 0.116192
+epoch   6.5  validation 0.119127  stuck units 0%
+epoch   7.0  validation 0.119104  stuck units 0%
+epoch 7  train 0.115289
+epoch   7.5  validation 0.119266  stuck units 0%
+epoch   8.0  validation 0.119231  stuck units 0%
+epoch 8  train 0.114685
+epoch   8.5  validation 0.119418  stuck units 0%
+epoch   9.0  validation 0.119484  stuck units 0%
+epoch 9  train 0.114216
+epoch   9.5  validation 0.119549  stuck units 0%
+epoch  10.0  validation 0.119598  stuck units 0%
+epoch 10  train 0.113828
+epoch  10.5  validation 0.119859  stuck units 0%
+epoch  11.0  validation 0.119741  stuck units 0%
+epoch 11  train 0.113480
+epoch  11.5  validation 0.119864  stuck units 0%
+epoch  12.0  validation 0.119919  stuck units 0%
+epoch 12  train 0.113162
+epoch  12.5  validation 0.120141  stuck units 0%
+epoch  13.0  validation 0.120087  stuck units 0%
+epoch 13  train 0.112838
+epoch  13.5  validation 0.120148  stuck units 0%
+epoch  14.0  validation 0.120238  stuck units 0%
+epoch 14  train 0.112543
+epoch  14.5  validation 0.120290  stuck units 0%
+epoch  15.0  validation 0.120223  stuck units 0%
+epoch 15  train 0.112349
+epoch  15.5  validation 0.120328  stuck units 0%
+epoch  16.0  validation 0.120489  stuck units 0%
+epoch 16  train 0.112231
+epoch  16.5  validation 0.120504  stuck units 0%
+epoch  17.0  validation 0.120336  stuck units 0%
+epoch 17  train 0.112131
+epoch  17.5  validation 0.120322  stuck units 0%
+epoch  18.0  validation 0.120448  stuck units 0%
+epoch 18  train 0.112056
+epoch  18.5  validation 0.120371  stuck units 0%
+epoch  19.0  validation 0.120448  stuck units 0%
+epoch 19  train 0.111989
+epoch  19.5  validation 0.120546  stuck units 0%
+epoch  20.0  validation 0.120454  stuck units 0%
+epoch 20  train 0.111938
+epoch  20.5  validation 0.120245  stuck units 0%
+epoch  21.0  validation 0.120296  stuck units 0%
+epoch 21  train 0.111517
+epoch  21.5  validation 0.120404  stuck units 0%
+epoch  22.0  validation 0.120364  stuck units 0%
+epoch 22  train 0.111470
+epoch  22.5  validation 0.120395  stuck units 0%
+epoch  23.0  validation 0.120441  stuck units 0%
+epoch 23  train 0.111449
+epoch  23.5  validation 0.120380  stuck units 0%
+epoch  24.0  validation 0.120496  stuck units 0%
+epoch 24  train 0.111430
+epoch  24.5  validation 0.120519  stuck units 0%
+epoch  25.0  validation 0.120503  stuck units 0%
+epoch 25  train 0.111416
+epoch  25.5  validation 0.120432  stuck units 0%
+epoch  26.0  validation 0.120420  stuck units 0%
+epoch 26  train 0.111270
+epoch  26.5  validation 0.120440  stuck units 0%
+epoch  27.0  validation 0.120446  stuck units 0%
+epoch 27  train 0.111258
+epoch  27.5  validation 0.120461  stuck units 0%
+epoch  28.0  validation 0.120505  stuck units 0%
+epoch 28  train 0.111251
+epoch  28.5  validation 0.120446  stuck units 0%
+epoch  29.0  validation 0.120496  stuck units 0%
+epoch 29  train 0.111246
+epoch  29.5  validation 0.120493  stuck units 0%
+epoch  30.0  validation 0.120532  stuck units 0%
+epoch 30  train 0.111242

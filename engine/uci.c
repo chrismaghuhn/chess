@@ -12,6 +12,7 @@
 
 #include "game.h"
 #include "movegen.h"
+#include "nnue.h"
 #include "perft.h"
 #include "search.h"
 
@@ -27,6 +28,8 @@
 typedef struct {
     Game game;
     Weights weights;
+    Network net;  /* loaded with setoption Network; hidden part may be empty */
+    bool has_net;
     Search *search;
     SearchLimits limits;
     atomic_bool stop;
@@ -195,6 +198,28 @@ static void cmd_setoption(Uci *u, char *args) {
         }
         search_set_weights(u->search, &u->weights); /* recomputes the learned piece values */
         search_clear(u->search);                    /* stored scores came from the old weights */
+    } else if (strcasecmp(name, "Network") == 0) {
+        /* Evaluate with a network file (milestone 9); Weights still order captures. */
+        char err[256];
+        Network net;
+        if (len == 0 || strcmp(value, "<empty>") == 0) {
+            search_set_network(u->search, NULL);
+            if (u->has_net)
+                nnue_free(&u->net);
+            u->has_net = false;
+        } else if (nnue_load(&net, value, err, sizeof err)) {
+            search_set_network(u->search, NULL);
+            if (u->has_net)
+                nnue_free(&u->net);
+            u->net = net;
+            u->has_net = true;
+            search_set_network(u->search, &u->net);
+            printf("info string loaded network %s\n", value);
+        } else {
+            printf("info string %s\n", err);
+            return;
+        }
+        search_clear(u->search);
     } else {
         printf("info string unknown option %s\n", name);
     }
@@ -226,6 +251,7 @@ void uci_loop(void) {
             printf("id author chrismaghuhn\n");
             printf("option name Hash type spin default %d min 1 max %d\n", DEFAULT_HASH_MB, MAX_HASH_MB);
             printf("option name Weights type string default <empty>\n");
+            printf("option name Network type string default <empty>\n");
             printf("uciok\n");
         } else if (strcmp(command, "isready") == 0) {
             printf("readyok\n");
@@ -261,6 +287,8 @@ void uci_loop(void) {
     }
     stop_search(u);
     search_free(u->search);
+    if (u->has_net)
+        nnue_free(&u->net);
     free(u);
     free(line);
 }
