@@ -79,6 +79,13 @@ if [ "$(kv "$one_sided" a_wins)" = 2 ]; then
     case "$(kv "$one_sided" elo_err)" in *inf* | *nan* | "") fail "one-sided match error: $one_sided" ;; esac
 fi
 
+# Against an external UCI engine (here: this engine itself), with a fixed time per move.
+peer=$(timeout 60 "$engine" match --a "$tmp/tuned1.bin" --b-uci "$engine" --movetime 10 --games 2 --threads 2 2>&1)
+[ $(($(kv "$peer" a_wins) + $(kv "$peer" draws) + $(kv "$peer" b_wins))) -eq 2 ] 2>/dev/null \
+    || fail "match against a UCI engine: $peer"
+"$engine" match --b-uci "$engine" --games 2 2>/dev/null && fail "UCI opponent without --movetime accepted"
+"$engine" match --b-uci /nonexistent --movetime 10 --games 2 2>/dev/null && fail "missing UCI engine accepted"
+
 # The generation loop runs end to end and resumes without redoing anything.
 run="$tmp/generations"
 rm -rf "$run"

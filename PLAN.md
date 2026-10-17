@@ -193,6 +193,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 5 | Tempo (siehe unten) | Lauf 2 mit der schnellen Engine erreicht dieselbe Stärke wie Lauf 1 mit deutlich weniger CPU-Zeit |
 | 6 | Reichere Bewertung (Experiment) | verworfen, siehe unten: kostet mehr Tempo, als es Elo bringt |
 | 7 | Knotenzahl pro Zug | welche Knotenzahl ergibt die meiste Stärke pro CPU-Sekunde Training |
+| 8 | Absolute Elo | Matches gegen Stockfish mit gedrosselter Stärke (nur Messung) |
 
 ### Meilenstein 5: Tempo
 
@@ -328,6 +329,27 @@ seiner eigenen Knotenzahl misst, spielt jede Generation zusätzlich gegen einen 
 - Zusammen mit Meilenstein 5: Lauf 7 erreicht die Stärke von Lauf 1 mit 2882 statt 4824 CPU-s (−40 %).
 - Offen: das Optimum zwischen 1000 und 3000 Knoten genauer; ob es sich mit stärkeren Gewichten verschiebt
   (später mehr Knoten?); Partien pro Generation als zweiter Regler.
+
+### Meilenstein 8: absolute Elo
+
+`engine match --b-uci PATH --b-option Name=Value --movetime MS` lässt eine externe UCI-Engine als Gegner B spielen
+(eigener Prozess; jeder ihrer Züge wird gegen unsere legalen Züge geprüft). Referenz: Stockfish 16 aus dem
+Paketsystem mit `UCI_LimitStrength=true` und `UCI_Elo` (gegen CCRL kalibriert). Reine Messung – nichts davon
+fließt ins Training. Logs: `runs/anchor-stockfish/`.
+
+Lauf 7 Gen 12 (stärkste Gewichte, ~48 CPU-Minuten Training), PVS+NMP+LMR, beide Seiten 0,1 s pro Zug, je 400 Partien:
+
+| Stockfish `UCI_Elo` | Ergebnis | Elo-Differenz | Schätzung |
+|---|---|---|---|
+| 1800 | +230 =20 −150 | +70 ± 34 | 1870 |
+| 1900 | +202 =21 −177 | +22 ± 33 | 1922 |
+| 2000 | +166 =16 −218 | −45 ± 34 | 1955 |
+
+- **Etwa 1900 Elo auf der Stockfish-Skala** bei 0,1 s pro Zug. Statistisch ±20, aber Stockfishs Stufen sind auf
+  längere Bedenkzeiten kalibriert: Bei 0,1 s liegen seine Stufen 1800 und 2000 für uns nur ~115 statt 200 Elo
+  auseinander. Ehrlicher ist daher **1900 ± 100**, und nur für diese Bedenkzeit.
+- Einordnung: unter Engines eher schwach (Spitze > 3500), etwa im Bereich einfacher Lehr-Engines mit
+  handgeschriebener Bewertung – erreicht ohne jedes Schachwissen in ~3 Minuten Wandzeit Training.
 
 ## Ergebnisse
 

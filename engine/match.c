@@ -7,15 +7,18 @@
 #include <limits.h>
 #include <math.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 #include "eval.h"
+#include "movegen.h"
 #include "game.h"
 #include "rng.h"
 #include "search.h"
+#include "ucipeer.h"
 
 /*
  * Games come in pairs: one random opening, played once with A as white and
@@ -33,6 +36,10 @@ typedef struct {
     int hash_mb;
     const char *paths[2];
     unsigned options[2]; /* search options of A and B */
+    int movetime;        /* ms per move for both sides instead of nodes; 0 = use nodes */
+    const char *uci;     /* B is this external UCI engine instead of weights */
+    char *uci_options[32];
+    int uci_option_count;
 } Config;
 
 typedef struct {
@@ -50,23 +57,58 @@ static double clock_seconds(clockid_t clock) {
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 
-/* Plays one game; returns the result from A's view: 2 win, 1 draw, 0 loss. */
-static int play(const Config *c, Search *searchers[2], const Game *opening, int a_color, uint64_t *rng) {
+/*
+ * Plays one game; returns the result from A's view: 2 win, 1 draw, 0 loss.
+ * With peer set, B's moves come from the external engine; an illegal or
+ * missing move from it ends the program, since the match would be invalid.
+ */
+static int play(const Config *c, Search *searchers[2], UciPeer *peer, const Game *opening, int a_color,
+                uint64_t *rng) {
     Game g = *opening;
     search_clear(searchers[0]);
     search_clear(searchers[1]);
+    if (peer && !uci_peer_new_game(peer)) {
+        fprintf(stderr, "%s stopped responding\n", peer->name);
+        exit(1);
+    }
+
+    char fen[FEN_MAX];
+    board_to_fen(&opening->board, fen, sizeof fen);
+    size_t moves_size = (size_t)c->max_plies * 6 + 1, moves_len = 0;
+    char *moves = calloc(moves_size, 1);
+    if (!moves) {
+        fprintf(stderr, "out of memory\n");
+        exit(1);
+    }
 
     GameResult result;
     int ply = c->random_plies;
     while ((result = game_result(&g)) == GAME_ONGOING && ply < c->max_plies) {
         int mover = g.board.side == a_color ? 0 : 1;
-        SearchLimits limits;
-        search_limits_init(&limits);
-        limits.nodes = c->nodes[mover];
-        limits.seed = rng_next(rng) | 1;
-        game_play(&g, search_run(searchers[mover], &g, &limits, false).best);
+        Move m;
+        if (mover == 1 && peer) {
+            char name[8] = "";
+            if (!uci_peer_go(peer, fen, moves, c->movetime, c->nodes[1], name) || !game_find_move(&g.board, name, &m)) {
+                fprintf(stderr, "%s: no legal move (got \"%s\") in %s moves %s\n", peer->name, name, fen, moves);
+                exit(1);
+            }
+        } else {
+            SearchLimits limits;
+            search_limits_init(&limits);
+            if (c->movetime > 0)
+                limits.movetime = c->movetime;
+            else
+                limits.nodes = c->nodes[mover];
+            limits.seed = rng_next(rng) | 1;
+            m = search_run(searchers[mover], &g, &limits, false).best;
+        }
+        char name[6];
+        move_to_uci(m, name);
+        moves_len += (size_t)snprintf(moves + moves_len, moves_size - moves_len, "%s%s", moves_len ? " " : "", name);
+        game_play(&g, m);
         ply++;
     }
+    free(moves);
     if (result == GAME_ONGOING || result == GAME_DRAW)
         return 1;
     bool white_won = result == GAME_WHITE_WINS;
@@ -84,6 +126,16 @@ static void *worker(void *arg) {
     for (int k = 0; k < 2; k++) {
         search_set_weights(searchers[k], &m->weights[k]);
         search_set_options(searchers[k], c->options[k]);
+    }
+
+    UciPeer peer, *peer_ptr = NULL;
+    if (c->uci) {
+        char err[256];
+        if (!uci_peer_start(&peer, c->uci, c->uci_options, c->uci_option_count, err, sizeof err)) {
+            fprintf(stderr, "%s\n", err);
+            exit(1);
+        }
+        peer_ptr = &peer;
     }
 
     Board start;
@@ -104,7 +156,7 @@ static void *worker(void *arg) {
         int scores[2];
         for (int a_color = 0; a_color < 2; a_color++) {
             uint64_t game_rng = rng ^ (uint64_t)(a_color + 1) * 0x9E3779B97F4A7C15ULL;
-            scores[a_color] = play(c, searchers, &opening, a_color, &game_rng);
+            scores[a_color] = play(c, searchers, peer_ptr, &opening, a_color, &game_rng);
         }
 
         pthread_mutex_lock(&m->lock);
@@ -120,6 +172,8 @@ static void *worker(void *arg) {
                     m->draws, m->b_wins);
         pthread_mutex_unlock(&m->lock);
     }
+    if (peer_ptr)
+        uci_peer_stop(peer_ptr);
     search_free(searchers[0]);
     search_free(searchers[1]);
     return NULL;
@@ -182,7 +236,9 @@ static void usage(void) {
                     "                    [--threads N] [--seed N] [--random-plies N] [--max-plies N]\n"
                     "                    [--hash MB]\n"
                     "Games are played in pairs with colors swapped; zero means all weights 0.\n"
-                    "OPTS: none, all, or a list like pvs,nmp,lmr (default: the engine default).\n");
+                    "OPTS: none, all, or a list like pvs,nmp,lmr (default: the engine default).\n"
+                    "Against another engine: --b-uci PATH [--b-option Name=Value ...] --movetime MS\n"
+                    "(B is then that engine; --movetime gives both sides the same time per move).\n");
 }
 
 int match_main(int argc, char **argv) {
@@ -203,6 +259,12 @@ int match_main(int argc, char **argv) {
             c.paths[0] = value;
         else if (strcmp(key, "--b") == 0)
             c.paths[1] = value;
+        else if (strcmp(key, "--movetime") == 0)
+            ok = parse_int(value, &c.movetime) && c.movetime > 0;
+        else if (strcmp(key, "--b-uci") == 0)
+            c.uci = value;
+        else if (strcmp(key, "--b-option") == 0 && c.uci_option_count < 32)
+            c.uci_options[c.uci_option_count++] = argv[i + 1];
         else if (strcmp(key, "--a-search") == 0)
             ok = search_parse_options(value, &c.options[0]);
         else if (strcmp(key, "--b-search") == 0)
@@ -235,11 +297,19 @@ int match_main(int argc, char **argv) {
     }
     for (int k = 0; k < 2; k++)
         c.nodes[k] = side_nodes[k] ? side_nodes[k] : both_nodes ? both_nodes : c.nodes[k];
+    if (c.uci) {
+        c.paths[1] = c.uci;
+        if (!c.movetime) {
+            fprintf(stderr, "--b-uci needs --movetime (engines limited in strength are calibrated by time)\n");
+            return 2;
+        }
+    }
     if (c.max_plies <= c.random_plies) {
         usage();
         return 2;
     }
 
+    signal(SIGPIPE, SIG_IGN); /* a dying UCI engine must not kill us; its errors are reported */
     Match *m = calloc(1, sizeof *m);
     if (!m) {
         fprintf(stderr, "out of memory\n");
@@ -248,7 +318,9 @@ int match_main(int argc, char **argv) {
     m->cfg = c;
     for (int k = 0; k < 2; k++) {
         char err[256];
-        if (strcmp(c.paths[k], "zero") == 0) {
+        if (k == 1 && c.uci) {
+            weights_zero(&m->weights[k]);
+        } else if (strcmp(c.paths[k], "zero") == 0) {
             weights_zero(&m->weights[k]);
         } else if (!weights_load(c.paths[k], &m->weights[k], err, sizeof err)) {
             fprintf(stderr, "%s\n", err);

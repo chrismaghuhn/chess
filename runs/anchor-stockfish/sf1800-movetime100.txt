@@ -1,0 +1,2 @@
+runs/run7-n1500/weights/gen12.bin vs /usr/games/stockfish: +230 =20 -150, score 60.0%, Elo +70 +/- 34
+summary games=400 a_wins=230 draws=20 b_wins=150 score=0.6000 elo=70.4 elo_err=34.0 saturated=0 cpu_s=1652.739 wall_s=483.350
