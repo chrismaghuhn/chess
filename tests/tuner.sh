@@ -90,6 +90,12 @@ redo=$(GAMES=12 NODES=200 MATCH_GAMES=6 EPOCHS=10 THREADS=4 ENGINE="$engine" TUN
 [ "$redo" -eq 0 ] || fail "resume redid $redo steps"
 python3 tools/plot.py "$run/generations.csv" "$run/curve.svg" >/dev/null || fail "plot"
 
+# Every generation measured against one anchor, on one Elo scale.
+GAMES=4 NODES=200 THREADS=4 ENGINE="$engine" timeout 120 sh tools/anchor.sh "$run" "$run/weights/gen2.bin" \
+    >/dev/null 2>&1 || fail "anchor measurement"
+[ "$(wc -l <"$run/anchor.csv")" -eq 3 ] || fail "anchor.csv should have a header and 2 rows"
+python3 tools/plot.py -o "$run/anchor.svg" "$run/anchor.csv" "$run/generations.csv" >/dev/null || fail "plot of several runs"
+
 # Other settings for an existing run are refused.
 GAMES=14 NODES=200 MATCH_GAMES=6 EPOCHS=10 THREADS=4 ENGINE="$engine" TUNER="$tuner" \
     sh tools/generations.sh "$run" 2 2>/dev/null && fail "resume with other settings accepted"

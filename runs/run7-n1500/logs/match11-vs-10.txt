@@ -1,0 +1,2 @@
+runs/run7-n1500/weights/gen11.bin vs runs/run7-n1500/weights/gen10.bin: +170 =66 -164, score 50.7%, Elo +5 +/- 31
+summary games=400 a_wins=170 draws=66 b_wins=164 score=0.5075 elo=5.2 elo_err=31.2 saturated=0 cpu_s=22.974 wall_s=1.778

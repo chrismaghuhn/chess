@@ -88,7 +88,7 @@ def main():
     parts.append(f'<text x="{(LEFT + WIDTH - RIGHT) / 2}" y="{HEIGHT - 15}" text-anchor="middle">'
                  'cumulative CPU seconds (self-play + tuning)</text>')
     parts.append(f'<text transform="translate(18 {(TOP + HEIGHT - BOTTOM) / 2}) rotate(-90)" '
-                 'text-anchor="middle">Elo (chained, vs. gen 0)</text>')
+                 'text-anchor="middle">Elo</text>')
 
     colors = ["#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c"]
     for k, (name, points) in enumerate(runs):

@@ -1,0 +1,1 @@
+games=2000 nodes=15000 match_games=400 epochs=400 search=exact engine=14201976

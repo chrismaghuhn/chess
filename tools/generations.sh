@@ -4,7 +4,7 @@
 #
 # Usage: tools/generations.sh RUN_DIR GENERATIONS
 # Settings (environment, defaults in brackets):
-#   GAMES [2000] self-play games per generation    NODES [5000] nodes per move
+#   GAMES [2000] self-play games per generation    NODES [1500] nodes per move (most strength per CPU, M7)
 #   MATCH_GAMES [400] games per match              EPOCHS [400] tuner epochs
 #   SEARCH [exact] search options for self-play and matches (see engine match)
 #   THREADS [all cores]                            ENGINE, TUNER: binaries
@@ -34,7 +34,7 @@ fi
 run=$1
 gens=$2
 GAMES=${GAMES:-2000}
-NODES=${NODES:-5000}
+NODES=${NODES:-1500}
 MATCH_GAMES=${MATCH_GAMES:-400}
 EPOCHS=${EPOCHS:-400}
 SEARCH=${SEARCH:-exact}

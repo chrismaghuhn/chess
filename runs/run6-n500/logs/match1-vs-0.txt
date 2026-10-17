@@ -1,0 +1,2 @@
+runs/run6-n500/weights/gen1.bin vs zero: +379 =15 -6, score 96.6%, Elo +583 +/- 85
+summary games=400 a_wins=379 draws=15 b_wins=6 score=0.9663 elo=582.7 elo_err=85.3 saturated=0 cpu_s=2.982 wall_s=0.236

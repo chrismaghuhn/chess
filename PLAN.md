@@ -48,7 +48,7 @@ engine/   main.c, uci.c, selfplay.c         → Binary `engine` (UCI; `bench`, `
 tuner/    main.c, texel.[ch]                → Binary `tuner`
 tests/    perft.c (Perft-Suite), search.c (Matt-Orakel, Remis, legale Partien),
           eval.c (Merkmale, Gewichte, Datenformat), uci.sh, selfplay.sh → `make test`
-tools/    generations.sh (Trainingsschleife), plot.py (SVG-Kurve, ohne Zusatzpakete)
+tools/    generations.sh (Trainingsschleife), anchor.sh (Läufe auf eine Elo-Skala), plot.py (SVG, ohne Zusatzpakete)
 runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, logs/,
               data/ (Trainingsdaten, nicht in git)
 ```
@@ -302,6 +302,32 @@ Erkenntnisse:
 - Mögliche spätere Wege, falls die Frage wiederkommt: einfaches Modell für die ersten Generationen und reiche
   Merkmale erst ab guten Daten (Curriculum); Bauernstruktur per Pawn-Hash billig machen; mehr Partien pro
   Generation. Die Werkzeuge dafür (Phasen-Merkmale, Ablations-Ergebnisse) liegen auf dem Branch.
+
+### Meilenstein 7: Knotenzahl pro Zug
+
+Frage: Wie viele Knoten pro Zug ergeben die meiste Spielstärke pro CPU-Sekunde Training? Mehr Knoten heißen
+bessere Partien (≈ +150 Elo pro Verdopplung), aber weniger Partien pro CPU-Sekunde.
+
+Läufe wie Lauf 4 (2000 Partien/Generation, `exact`), nur die Knotenzahl variiert. Weil jeder Lauf intern mit
+seiner eigenen Knotenzahl misst, spielt jede Generation zusätzlich gegen einen gemeinsamen Anker
+(`tools/anchor.sh`: Lauf 4 Gen 8, 5000 Knoten, 1000 Partien, ±20 Elo). Grafik: `runs/nodes-comparison.svg`.
+
+| CPU-s Training | 500 Knoten (Lauf 6) | **1500 Knoten (Lauf 7)** | 5000 Knoten (Lauf 4) | 15000 Knoten (Lauf 8) |
+|---|---|---|---|---|
+| ~1400 | −418 (G7) | −170 (G6) | −362 (G3) | −554 (G1) |
+| ~1800 | −326 (G8) | **−105** (G8) | −234 (G4) | – |
+| ~2900 | −191 (G12) | **−7** (G12) | −61 (G6) | – |
+| ~3800 | −184 (G15) | – | −4 (G8) | −274 (G3) |
+| ~7500 | – | – | – | −14 (G6) |
+
+- **1500 Knoten sind am effizientesten:** Endstärke von Lauf 4 mit 2882 statt ~3700 CPU-s (−24 %), früh im
+  Training über 100 Elo vor 5000 Knoten. Neuer Standard in `generations.sh`.
+- **500 Knoten sind zu wenig:** Die Partien werden so schlecht, dass das Lernen bei ~−170 stecken bleibt.
+- **15000 Knoten** lernen pro Generation am meisten (Gen 6: −14 gegen −61 bei 5000), sind pro CPU-Sekunde aber
+  klar schlechter.
+- Zusammen mit Meilenstein 5: Lauf 7 erreicht die Stärke von Lauf 1 mit 2882 statt 4824 CPU-s (−40 %).
+- Offen: das Optimum zwischen 1000 und 3000 Knoten genauer; ob es sich mit stärkeren Gewichten verschiebt
+  (später mehr Knoten?); Partien pro Generation als zweiter Regler.
 
 ## Ergebnisse
 
