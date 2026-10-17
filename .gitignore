@@ -4,3 +4,4 @@ runs/*/data/
 runs/*/logs/*.err
 runs/*/logs/*.part
 __pycache__/
+.env
