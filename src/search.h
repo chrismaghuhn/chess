@@ -52,6 +52,17 @@ void search_limits_init(SearchLimits *limits);
  */
 SearchResult search_run(Search *s, const Game *game, const SearchLimits *limits, bool print_info);
 
+/*
+ * Runs only the quiescence search (captures and promotions, or evasions in
+ * check) and follows its best line to the end: the quiet position whose
+ * static evaluation the score comes from. The tuner trains on these, so it
+ * does not learn from positions where a piece is about to be taken.
+ * score is from b's side to move; leaf may have the other side to move.
+ * Gives up after max_nodes (0 = no limit) and returns false with leaf = b.
+ */
+bool search_quiet(Search *s, const Board *b, uint64_t max_nodes, Board *leaf, int *score,
+                  uint64_t *nodes);
+
 /* Moves to mate for a mate score: positive if the side to move mates, else 0. */
 int search_mate_moves(int score);
 

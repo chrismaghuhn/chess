@@ -25,6 +25,9 @@ void movegen_generate(const Board *b, MoveList *list);
 /* Only captures and promotions (for quiescence search). */
 void movegen_generate_noisy(const Board *b, MoveList *list);
 
+/* Only legal moves, in generation order. Slower; not for the search. */
+void movegen_legal(const Board *b, MoveList *list);
+
 /* Writes the move in UCI notation, e.g. "e2e4" or "e7e8q". */
 void move_to_uci(Move m, char out[6]);
 

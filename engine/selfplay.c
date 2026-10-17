@@ -19,7 +19,6 @@
 #include "search.h"
 
 #define MAX_RANDOM_PLIES 40
-#define MAX_OPENING_TRIES 1000
 
 typedef struct {
     int games;
@@ -78,18 +77,6 @@ static void *checked_alloc(size_t size) {
     return p;
 }
 
-static int legal_moves(const Board *b, Move out[MAX_MOVES]) {
-    MoveList list;
-    movegen_generate(b, &list);
-    int count = 0;
-    for (int i = 0; i < list.count; i++) {
-        Board next;
-        if (board_make_move(b, list.moves[i], &next))
-            out[count++] = list.moves[i];
-    }
-    return count;
-}
-
 static Played *play_game(const Config *c, Search *s, int id) {
     uint64_t rng = c->seed ^ (0xD1B54A32D192ED03ULL * (uint64_t)(id + 1));
     Played *p = checked_alloc(sizeof *p);
@@ -98,23 +85,9 @@ static Played *play_game(const Config *c, Search *s, int id) {
     Board start;
     board_from_fen(&start, START_FEN);
     Game g;
-
-    /* Random opening; start over if any position in it ends the game. */
-    for (int attempt = 0;; attempt++) {
-        if (attempt == MAX_OPENING_TRIES) {
-            fprintf(stderr, "game %d: no random opening without a game end after %d tries\n", id, attempt);
-            exit(1);
-        }
-        game_init(&g, &start);
-        bool over = false;
-        for (int ply = 0; ply < c->random_plies && !over; ply++) {
-            Move moves[MAX_MOVES];
-            int n = legal_moves(&g.board, moves); /* > 0: the game is not over */
-            game_play(&g, moves[rng_below(&rng, (uint64_t)n)]);
-            over = game_result(&g) != GAME_ONGOING;
-        }
-        if (!over)
-            break;
+    if (!game_random_opening(&g, &start, c->random_plies, &rng)) {
+        fprintf(stderr, "game %d: no random opening without a game end\n", id);
+        exit(1);
     }
 
     search_clear(s);

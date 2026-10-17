@@ -193,7 +193,8 @@ static void cmd_setoption(Uci *u, char *args) {
             printf("info string %s\n", err);
             return;
         }
-        search_clear(u->search); /* stored scores came from the old weights */
+        search_set_weights(u->search, &u->weights); /* recomputes the learned piece values */
+        search_clear(u->search);                    /* stored scores came from the old weights */
     } else {
         printf("info string unknown option %s\n", name);
     }

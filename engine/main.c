@@ -8,6 +8,7 @@
 
 #include "board.h"
 #include "game.h"
+#include "match.h"
 #include "search.h"
 #include "selfplay.h"
 #include "uci.h"
@@ -59,6 +60,8 @@ int main(int argc, char **argv) {
 
     if (argc >= 2 && strcmp(argv[1], "selfplay") == 0)
         return selfplay_main(argc - 1, argv + 1);
+    if (argc >= 2 && strcmp(argv[1], "match") == 0)
+        return match_main(argc - 1, argv + 1);
     if (argc >= 2 && strcmp(argv[1], "data-info") == 0)
         return data_info_main(argc - 1, argv + 1);
     if (argc >= 2 && strcmp(argv[1], "bench") == 0) {

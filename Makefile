@@ -17,18 +17,23 @@ endif
 
 LIB_OBJ    := $(patsubst %.c,$(BUILD)/obj/%.o,$(wildcard src/*.c))
 ENGINE_OBJ := $(patsubst %.c,$(BUILD)/obj/%.o,$(wildcard engine/*.c))
+TUNER_OBJ  := $(patsubst %.c,$(BUILD)/obj/%.o,$(wildcard tuner/*.c))
 TEST_OBJ   := $(patsubst %.c,$(BUILD)/obj/%.o,$(wildcard tests/*.c))
 
 ENGINE      := $(BUILD)/engine
+TUNER       := $(BUILD)/tuner
 PERFT       := $(BUILD)/perft
 SEARCH_TEST := $(BUILD)/search-test
 EVAL_TEST   := $(BUILD)/eval-test
 
 .PHONY: all debug test test-quick test-full test-debug bench clean
 
-all: $(ENGINE) $(PERFT) $(SEARCH_TEST) $(EVAL_TEST)
+all: $(ENGINE) $(TUNER) $(PERFT) $(SEARCH_TEST) $(EVAL_TEST)
 
 $(ENGINE): $(ENGINE_OBJ) $(LIB_OBJ)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+$(TUNER): $(TUNER_OBJ) $(LIB_OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(PERFT): $(BUILD)/obj/tests/perft.o $(LIB_OBJ)
@@ -51,6 +56,7 @@ define other_tests
 	./$(EVAL_TEST) $(TMP)
 	sh tests/uci.sh ./$(ENGINE)
 	sh tests/selfplay.sh ./$(ENGINE) $(TMP)
+	sh tests/tuner.sh ./$(ENGINE) ./$(TUNER) $(TMP)
 endef
 
 test: all
@@ -78,4 +84,4 @@ test-debug:
 clean:
 	rm -rf build
 
--include $(LIB_OBJ:.o=.d) $(ENGINE_OBJ:.o=.d) $(TEST_OBJ:.o=.d)
+-include $(LIB_OBJ:.o=.d) $(ENGINE_OBJ:.o=.d) $(TUNER_OBJ:.o=.d) $(TEST_OBJ:.o=.d)

@@ -16,23 +16,23 @@
 #define HISTORY_MAX 16384
 
 /*
- * Move ordering uses no chess knowledge: hash move first, then captures and
- * promotions, then killer moves, then the rest by history. History and
- * killers are learned during the search itself. Capture order by piece value
- * (MVV-LVA) would be prior knowledge; it can come later from learned weights.
+ * Move ordering uses no built-in chess knowledge: hash move first, then
+ * captures and promotions, then killer moves, then the rest by history.
+ * Captures are sorted by the *learned* piece values (most valuable victim,
+ * then least valuable attacker), which come from the current weights; with
+ * all weights 0 they are all equal and history decides, as in generation 0.
  */
-enum {
-    ORDER_HASH = 1 << 30,
-    ORDER_NOISY = 1 << 20,
-    ORDER_KILLER_1 = 1 << 19,
-    ORDER_KILLER_2 = 1 << 18,
-};
+#define ORDER_HASH (INT64_C(1) << 60)
+#define ORDER_NOISY (INT64_C(1) << 50)
+#define ORDER_KILLER_1 (INT64_C(1) << 20)
+#define ORDER_KILLER_2 (INT64_C(1) << 19)
 
 static const Weights zero_weights;
 
 struct Search {
     TT tt;
     const Weights *weights;
+    int piece_value[6];     /* learned: average weight of each piece type */
     int history[2][64][64]; /* [side][from][to] */
 
     /* State of the current run. */
@@ -73,6 +73,18 @@ Search *search_new(size_t hash_mb) {
 
 void search_set_weights(Search *s, const Weights *weights) {
     s->weights = weights ? weights : &zero_weights;
+
+    /* Squares a piece never stood on in training keep weight 0 and are left out. */
+    for (int type = 0; type < 6; type++) {
+        int64_t sum = 0;
+        int used = 0;
+        for (int sq = 0; sq < 64; sq++) {
+            int32_t w = s->weights->w[type * 64 + sq];
+            sum += w;
+            used += w != 0;
+        }
+        s->piece_value[type] = used ? (int)(sum / used) : 0;
+    }
 }
 
 void search_free(Search *s) {
@@ -183,7 +195,19 @@ static bool is_draw(const Search *s, const Board *b) {
     return false;
 }
 
-static void score_moves(const Search *s, const Board *b, const MoveList *list, int *scores,
+/* Learned gain of a capture or promotion, then the cheaper attacker first. */
+static int64_t capture_order(const Search *s, const Board *b, Move m) {
+    const int *value = s->piece_value;
+    int flags = move_flags(m);
+    int victim = flags == MF_EP_CAPTURE ? PAWN
+               : move_is_capture(m) ? piece_type(b->squares[move_to(m)]) : -1;
+    int64_t gain = victim >= 0 ? value[victim] : 0;
+    if (move_is_promo(m))
+        gain += value[move_promo_type(m)] - value[PAWN];
+    return gain * 64 - value[piece_type(b->squares[move_from(m)])];
+}
+
+static void score_moves(const Search *s, const Board *b, const MoveList *list, int64_t *scores,
                         Move hash_move, int ply) {
     const int (*history)[64] = s->history[b->side];
     for (int i = 0; i < list->count; i++) {
@@ -192,7 +216,7 @@ static void score_moves(const Search *s, const Board *b, const MoveList *list, i
         if (m == hash_move)
             scores[i] = ORDER_HASH;
         else if (move_is_capture(m) || move_is_promo(m))
-            scores[i] = ORDER_NOISY + h;
+            scores[i] = ORDER_NOISY + capture_order(s, b, m) * 32768 + h;
         else if (m == s->killers[ply][0])
             scores[i] = ORDER_KILLER_1;
         else if (m == s->killers[ply][1])
@@ -203,13 +227,13 @@ static void score_moves(const Search *s, const Board *b, const MoveList *list, i
 }
 
 /* Selection sort step: moves the best remaining move to index i. */
-static Move pick_move(MoveList *list, int *scores, int i) {
+static Move pick_move(MoveList *list, int64_t *scores, int i) {
     int best = i;
     for (int j = i + 1; j < list->count; j++)
         if (scores[j] > scores[best])
             best = j;
     Move m = list->moves[best];
-    int score = scores[best];
+    int64_t score = scores[best];
     list->moves[best] = list->moves[i];
     scores[best] = scores[i];
     list->moves[i] = m;
@@ -246,7 +270,7 @@ static int qsearch(Search *s, const Board *b, int alpha, int beta, int ply) {
     }
 
     MoveList list;
-    int scores[MAX_MOVES];
+    int64_t scores[MAX_MOVES];
     if (in_check)
         movegen_generate(b, &list);
     else
@@ -265,12 +289,43 @@ static int qsearch(Search *s, const Board *b, int alpha, int beta, int ply) {
             best = score;
             if (score > alpha) {
                 alpha = score;
+                s->pv[ply][0] = m;
+                memcpy(&s->pv[ply][1], s->pv[ply + 1], (size_t)s->pv_len[ply + 1] * sizeof(Move));
+                s->pv_len[ply] = s->pv_len[ply + 1] + 1;
                 if (score >= beta)
                     break;
             }
         }
     }
     return best;
+}
+
+bool search_quiet(Search *s, const Board *b, uint64_t max_nodes, Board *leaf, int *score,
+                  uint64_t *nodes) {
+    SearchLimits limits;
+    search_limits_init(&limits);
+    limits.nodes = max_nodes;
+    s->limits = &limits;
+    s->soft_limit = s->hard_limit = -1;
+    s->nodes = 0;
+    s->stopped = false;
+
+    int result = qsearch(s, b, -SCORE_INF, SCORE_INF, 0);
+    if (nodes)
+        *nodes = s->nodes;
+    s->limits = NULL;
+    *leaf = *b;
+    if (s->stopped)
+        return false;
+    if (score)
+        *score = result;
+
+    for (int i = 0; i < s->pv_len[0]; i++) {
+        Board next;
+        board_make_move(leaf, s->pv[0][i], &next);
+        *leaf = next;
+    }
+    return true;
 }
 
 static int negamax(Search *s, const Board *b, int depth, int alpha, int beta, int ply) {
@@ -317,7 +372,7 @@ static int negamax(Search *s, const Board *b, int depth, int alpha, int beta, in
     }
 
     MoveList list;
-    int scores[MAX_MOVES];
+    int64_t scores[MAX_MOVES];
     movegen_generate(b, &list);
     score_moves(s, b, &list, scores, hash_move, ply);
 

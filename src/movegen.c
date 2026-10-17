@@ -120,6 +120,17 @@ void movegen_generate_noisy(const Board *b, MoveList *list) {
     generate(b, list, true);
 }
 
+void movegen_legal(const Board *b, MoveList *list) {
+    MoveList all;
+    generate(b, &all, false);
+    list->count = 0;
+    for (int i = 0; i < all.count; i++) {
+        Board next;
+        if (board_make_move(b, all.moves[i], &next))
+            list->moves[list->count++] = all.moves[i];
+    }
+}
+
 void move_to_uci(Move m, char out[6]) {
     int from = move_from(m), to = move_to(m);
     out[0] = (char)('a' + file_of(from));

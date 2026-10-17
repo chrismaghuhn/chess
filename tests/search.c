@@ -174,6 +174,36 @@ static void test_search_draws(void) {
     CHECK(r.score == 0, "repetition with game history is a draw (score %d)", r.score);
 }
 
+/* search_quiet follows captures to the quiet position the tuner learns from. */
+static void test_quiet_leaf(void) {
+    Board b, leaf;
+    board_from_fen(&b, "4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1");
+
+    search_set_weights(search, NULL);
+    search_quiet(search, &b, 0, &leaf, NULL, NULL);
+    CHECK(leaf.hash == b.hash, "with zero weights the position is already quiet");
+
+    Weights queen;
+    weights_zero(&queen);
+    for (int sq = 0; sq < 64; sq++)
+        queen.w[QUEEN * 64 + sq] = 900;
+    search_set_weights(search, &queen);
+    int score = 1;
+    bool resolved = search_quiet(search, &b, 0, &leaf, &score, NULL);
+    CHECK(resolved && !leaf.pieces[BLACK][QUEEN] && leaf.side == BLACK && score == 0,
+          "pawn takes the hanging queen (score %d)", score);
+
+    board_from_fen(&b, "4k3/8/8/3q4/8/8/8/4K3 w - - 0 1");
+    search_quiet(search, &b, 0, &leaf, &score, NULL);
+    CHECK(leaf.hash == b.hash && score == -900, "nothing to take: stand pat (score %d)", score);
+
+    /* A node limit that is too small gives up and leaves the position as it is. */
+    board_from_fen(&b, "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+    CHECK(!search_quiet(search, &b, 3, &leaf, &score, NULL) && leaf.hash == b.hash,
+          "node limit of search_quiet");
+    search_set_weights(search, NULL);
+}
+
 /* Plays UCI moves; returns false if one is illegal. */
 static bool play_moves(Game *g, const char *moves) {
     char buf[512];
@@ -302,6 +332,7 @@ int main(void) {
     test_mates();
     test_no_legal_moves();
     test_search_draws();
+    test_quiet_leaf();
     test_game_results();
     test_legal_games();
 

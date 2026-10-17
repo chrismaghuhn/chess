@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "movegen.h"
+#include "rng.h"
 
 void game_init(Game *g, const Board *b) {
     g->board = *b;
@@ -90,4 +91,22 @@ GameResult game_result_detail(const Game *g, GameEnd *end) {
 GameResult game_result(const Game *g) {
     GameEnd end;
     return game_result_detail(g, &end);
+}
+
+#define MAX_OPENING_TRIES 1000
+
+bool game_random_opening(Game *g, const Board *start, int plies, uint64_t *rng) {
+    for (int attempt = 0; attempt < MAX_OPENING_TRIES; attempt++) {
+        game_init(g, start);
+        bool over = game_result(g) != GAME_ONGOING;
+        for (int ply = 0; ply < plies && !over; ply++) {
+            MoveList legal;
+            movegen_legal(&g->board, &legal); /* not empty: the game is not over */
+            game_play(g, legal.moves[rng_below(rng, (uint64_t)legal.count)]);
+            over = game_result(g) != GAME_ONGOING;
+        }
+        if (!over)
+            return true;
+    }
+    return false;
 }

@@ -45,13 +45,12 @@ src/      gemeinsame Bibliothek (Engine und Tuner)
           search.[ch]    Negamax/Alpha-Beta, Quiescence, TT, Zugsortierung
           datafmt.[ch]   gepacktes Stellungsformat für Trainingsdaten
 engine/   main.c, uci.c, selfplay.c         → Binary `engine` (UCI; `bench`, `selfplay`, `data-info`)
-tuner/    main.c, texel.c                   → Binary `tuner`
+tuner/    main.c, texel.[ch]                → Binary `tuner`
 tests/    perft.c (Perft-Suite), search.c (Matt-Orakel, Remis, legale Partien),
           eval.c (Merkmale, Gewichte, Datenformat), uci.sh, selfplay.sh → `make test`
-tools/    plot.py (Python, nur Auswertung)
-weights/  Gewichtsdateien pro Generation
-data/     Trainingsdaten (nicht in git)
-log/      generations.csv
+tools/    generations.sh (Trainingsschleife), plot.py (SVG-Kurve, ohne Zusatzpakete)
+runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, logs/,
+              data/ (Trainingsdaten, nicht in git)
 ```
 
 ### Build
@@ -99,8 +98,10 @@ log/      generations.csv
 - Transposition Table (ein Eintrag pro Slot, immer ersetzen)
 - Schach-Erweiterung: im Schach wird eine Halbzug tiefer gesucht
 - Zugsortierung **ohne Vorwissen**: TT-Zug, dann Schlagzüge und Umwandlungen, dann Killer-Züge,
-  dann History-Heuristik. History und Killer lernt die Suche selbst. MVV-LVA (nach Figurenwert)
-  wäre Vorwissen; das kommt erst, wenn die Figurenwerte aus den gelernten Gewichten stammen.
+  dann History-Heuristik. History und Killer lernt die Suche selbst. Schlagzüge werden per MVV-LVA mit
+  **gelernten** Figurenwerten sortiert (Mittel der Gewichte je Figurentyp); bei Gen 0 sind alle gleich.
+  Ohne diese Sortierung explodiert die Quiescence Search in chaotischen Stellungen: Der Tuner brauchte
+  für Gen 2 über 5 CPU-Stunden, mit Sortierung dauert dieselbe Auflösung Sekunden.
   Umwandlungen werden in Kodierungsreihenfolge erzeugt (Springer zuerst), nicht „Dame zuerst“.
 - Später: Null-Move-Pruning, Late Move Reductions, Aspiration Windows
 - Remis-Erkennung: Patt, Wiederholung (in der Suche zählt schon die zweite), 50-Züge-Regel, ungenügendes Material
@@ -154,20 +155,31 @@ log/      generations.csv
 - 10 Mio. Stellungen ≈ 320 MB
 
 ### Tuner (Texel-Tuning)
-- Liest gepackte Stellungen, löst sie per Quiescence Search mit den aktuellen Gewichten zu ruhigen Stellungen auf
-- Merkmale über dasselbe `features`-Modul wie die Engine
-- Verlust: `(Ergebnis − sigmoid(eval / K))²` mit festem K; Gewichte lernen die Skala
-- Optimierer: Adam, mehrere Threads, sparse Gradienten (nur aktive Merkmale)
-- 90/10-Aufteilung in Training und Validierung, um Overfitting zu erkennen
-- Optional: Gewichte der Vorgeneration als Startpunkt statt 0
+- `tuner --out FILE --data FILE [--data …] [--init FILE] [--epochs 400] [--lr 2] [--threads N] [--val-every 10]`
+- Löst jede Stellung mit `search_quiet` (nur Quiescence, mit den `--init`-Gewichten) zur ruhigen
+  Stellung auf; deren Merkmale (gleicher `features`-Code wie die Engine) werden einmal vorberechnet.
+  Bei Gen 0 (alle Gewichte 0) ist jede Stellung schon „ruhig“.
+- Verlust: `(Ergebnis − sigmoid(eval · ln10/400))²`, Ergebnis 0 / 0,5 / 1 aus Sicht der Seite am Zug.
+  Die feste Skala macht die gelernten Einheiten ungefähr zu Centipawns.
+- Full-Batch-Adam; Gradienten in 64 festen Blöcken summiert → bitgleiche Gewichte für jede Thread-Anzahl
+- Validierung: jede 10. Partie (Partiegrenzen über den Halbzug). Behalten werden die Gewichte der
+  Epoche mit der kleinsten Validierungs-Loss (Early Stopping); mit `--val-every 0` die letzten.
+- Gibt die gefundenen Figurenwerte aus (Mittel über die gesehenen Felder), z. B. nach Gen 0:
+  `P=36 N=41 B=51 R=85 Q=156` – die Reihenfolge hat ihm niemand verraten
+- Die Generationsschleife trainiert auf **allen** bisherigen Daten und startet bei den Vorgänger-Gewichten
 
 ### Messung
 - **Trainingsaufwand** = kumulierte CPU-Sekunden für Selbstpartien + Tuning
   (zusätzlich Anzahl Partien und Stellungen). Testmatches zählen nicht dazu.
-- **Elo pro Generation**: festes Match (z. B. 1000 Partien) gegen die Vorgeneration und gegen Gen 0
-  mit `cutechess-cli`, inkl. Fehlerbalken
-- **Code-Änderungen** (Suche etc.) per SPRT gegen die vorige Version
-- `log/generations.csv`: `gen, games, positions, selfplay_cpu_s, tune_cpu_s, cum_cpu_s, elo_vs_prev, elo_vs_gen0, err, notes`
+- **Elo pro Generation**: `engine match` (eigener Match-Runner, `cutechess-cli` ist nicht verfügbar):
+  Partiepaare mit vertauschten Farben aus derselben Zufallseröffnung, feste Knotenzahl, reproduzierbar,
+  Elo mit 95-%-Intervall aus der Varianz pro Partie. Gemessen gegen die Vorgeneration (verkettet zur
+  Kurve, Fehler addieren sich quadratisch) und gegen Gen 0 (sättigt schnell bei ~100 %).
+- **Code-Änderungen** (Suche etc.) per Match gegen die vorige Version (SPRT später)
+- `tools/generations.sh RUN_DIR N` (Einstellungen per Umgebung: GAMES, NODES, MATCH_GAMES, EPOCHS, THREADS)
+  schreibt `RUN_DIR/generations.csv`: `gen, games, positions, selfplay_cpu_s, tune_cpu_s, cum_cpu_s,
+  val_loss, elo_vs_prev, err_vs_prev, elo_chain, err_chain, elo_vs_gen0, err_vs_gen0, pieces`.
+  Abgebrochene Läufe setzen beim nächsten Aufruf fort. `tools/plot.py` zeichnet daraus die Kurve als SVG.
 - Absoluter Anker: am Ende Matches gegen Engines mit bekannter CCRL-Elo (nur Messung)
 
 ## Meilensteine
@@ -179,6 +191,30 @@ log/      generations.csv
 | 3 | Lineare Bewertung, Gewichtsdatei, Selbstpartien, Datenformat | `engine selfplay` erzeugt Daten und misst die CPU-Zeit |
 | 4 | Tuner + Generationsschleife + Match-Messung | erste Kurve mit ≥ 5 Generationen; Gen N schlägt Gen 0 messbar |
 | 5 | Verbesserungen | bessere Suche (billigeres Training), weitere Merkmale, später kleines NNUE aus eigenen Daten |
+
+## Ergebnisse
+
+### Lauf 1 (`runs/run1`): 8 Generationen, je 2000 Selbstpartien, 5000 Knoten/Zug, Matches mit 400 Partien
+
+| Gen | CPU kumuliert | Elo gegen Vorgänger | Elo verkettet | gelernte Werte (Bauer = 1) |
+|---|---|---|---|---|
+| 1 | 9,5 min | +920 ± 197 | +920 | N 1,16 · B 1,42 · R 2,38 · Q 4,37 |
+| 2 | 18 min | +167 ± 37 | +1087 | N 1,15 · B 1,40 · R 2,55 · Q 4,20 |
+| 3 | 28 min | +272 ± 42 | +1359 | N 1,21 · B 1,45 · R 2,87 · Q 4,97 |
+| 4 | 38 min | +173 ± 35 | +1532 | N 1,26 · B 1,50 · R 2,98 · Q 5,13 |
+| 5 | 49 min | +130 ± 34 | +1662 | N 1,43 · B 1,70 · R 3,21 · Q 5,55 |
+| 6 | 59 min | +70 ± 32 | +1732 | N 1,54 · B 1,85 · R 3,35 · Q 5,91 |
+| 7 | 70 min | +55 ± 32 | +1788 | N 1,59 · B 1,88 · R 3,33 · Q 5,99 |
+| 8 | 80 min | +57 ± 32 | +1845 ± 217 | N 1,63 · B 1,91 · R 3,34 · Q 6,09 |
+
+- Die Kurve flacht ab: Ab Gen 6 bringt jede Generation nur noch ~+60 Elo. Mit 384 Gewichten
+  (Figur × Feld) kann die Bewertung nicht mehr ausdrücken; der nächste Schritt sind neue Merkmale.
+- Die Figurenwerte nähern sich ohne jedes Vorwissen dem klassischen 1 : 3 : 3 : 5 : 9 an
+  (Reihenfolge stimmt ab Gen 1, Läufer > Springer, Verhältnisse wachsen weiter).
+- ~80 % des Aufwands sind Selbstpartien, ~20 % Tuning (Auflösung zu ruhigen Stellungen eingeschlossen).
+- Elo gegen Gen 0 sättigt ab Gen 2 bei 400 : 0; aussagekräftig ist nur die verkettete Kurve.
+  Die verketteten Fehler addieren sich, die absolute Zahl ist daher unsicher (± 217).
+- Ab Gen 7 enden ~6 % der Selbstpartien am Zuglimit: Die Engine kann Gewinnstellungen nicht verwerten.
 
 ## Offene Fragen
 

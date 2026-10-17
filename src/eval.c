@@ -86,13 +86,17 @@ bool weights_load_float(const char *path, float out[FEATURE_COUNT], char *err, s
     return true;
 }
 
+void weights_from_float(const float in[FEATURE_COUNT], Weights *out) {
+    for (int i = 0; i < FEATURE_COUNT; i++) {
+        float v = in[i] > WEIGHT_MAX ? WEIGHT_MAX : in[i] < -WEIGHT_MAX ? -WEIGHT_MAX : in[i];
+        out->w[i] = (int32_t)lrintf(v);
+    }
+}
+
 bool weights_load(const char *path, Weights *weights, char *err, size_t err_size) {
     float w[FEATURE_COUNT];
     if (!weights_load_float(path, w, err, err_size))
         return false;
-    for (int i = 0; i < FEATURE_COUNT; i++) {
-        float v = w[i] > WEIGHT_MAX ? WEIGHT_MAX : w[i] < -WEIGHT_MAX ? -WEIGHT_MAX : w[i];
-        weights->w[i] = (int32_t)lrintf(v);
-    }
+    weights_from_float(w, weights);
     return true;
 }

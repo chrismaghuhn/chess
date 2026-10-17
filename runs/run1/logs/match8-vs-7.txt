@@ -1,0 +1,2 @@
+runs/run1/weights/gen8.bin vs runs/run1/weights/gen7.bin: +203 =59 -138, score 58.1%, Elo +57 +/- 32
+summary games=400 a_wins=203 draws=59 b_wins=138 score=0.5813 elo=57.0 elo_err=31.9 cpu_s=99.368 wall_s=7.410

@@ -43,4 +43,7 @@ bool weights_load(const char *path, Weights *weights, char *err, size_t err_size
 
 bool weights_save_float(const char *path, const float weights[FEATURE_COUNT]);
 
+/* The engine's integer weights for float weights: rounded half to even, clamped to WEIGHT_MAX. */
+void weights_from_float(const float in[FEATURE_COUNT], Weights *out);
+
 #endif

@@ -42,4 +42,11 @@ GameResult game_result(const Game *g);
 /* Like game_result, also says why the game ended (END_NONE while ongoing). */
 GameResult game_result_detail(const Game *g, GameEnd *end);
 
+/*
+ * Starts a game from `start` with `plies` uniformly random legal moves, drawn
+ * from rng. Openings in which the game ends are thrown away and redrawn;
+ * returns false if no usable opening turned up after many tries.
+ */
+bool game_random_opening(Game *g, const Board *start, int plies, uint64_t *rng);
+
 #endif

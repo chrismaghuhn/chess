@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="460" font-family="sans-serif" font-size="12">
+<rect width="760" height="460" fill="white"/>
+<text x="380.0" y="22" text-anchor="middle" font-size="15">Elo vs. training cost</text>
+<line x1="70.0" y1="40" x2="70.0" y2="400" stroke="#eee"/>
+<text x="70.0" y="418" text-anchor="middle">0</text>
+<line x1="235.0" y1="40" x2="235.0" y2="400" stroke="#eee"/>
+<text x="235.0" y="418" text-anchor="middle">1000</text>
+<line x1="400.0" y1="40" x2="400.0" y2="400" stroke="#eee"/>
+<text x="400.0" y="418" text-anchor="middle">2000</text>
+<line x1="565.0" y1="40" x2="565.0" y2="400" stroke="#eee"/>
+<text x="565.0" y="418" text-anchor="middle">3000</text>
+<line x1="730.0" y1="40" x2="730.0" y2="400" stroke="#eee"/>
+<text x="730.0" y="418" text-anchor="middle">4000</text>
+<line x1="70" y1="400.0" x2="730" y2="400.0" stroke="#eee"/>
+<text x="62" y="404.0" text-anchor="end">0</text>
+<line x1="70" y1="310.0" x2="730" y2="310.0" stroke="#eee"/>
+<text x="62" y="314.0" text-anchor="end">500</text>
+<line x1="70" y1="220.0" x2="730" y2="220.0" stroke="#eee"/>
+<text x="62" y="224.0" text-anchor="end">1000</text>
+<line x1="70" y1="130.0" x2="730" y2="130.0" stroke="#eee"/>
+<text x="62" y="134.0" text-anchor="end">1500</text>
+<line x1="70" y1="40.0" x2="730" y2="40.0" stroke="#eee"/>
+<text x="62" y="44.0" text-anchor="end">2000</text>
+<line x1="70" y1="400" x2="730" y2="400" stroke="#333"/>
+<line x1="70" y1="40" x2="70" y2="400" stroke="#333"/>
+<text x="400.0" y="445" text-anchor="middle">cumulative CPU seconds (self-play + tuning)</text>
+<text transform="translate(18 220.0) rotate(-90)" text-anchor="middle">Elo (chained, vs. gen 0)</text>
+<polyline points="70.0,400.0 164.2,234.5 248.3,204.4 347.7,155.3 449.2,124.2 553.8,100.9 656.7,88.2 760.3,78.2 865.9,68.0" fill="none" stroke="#2563eb" stroke-width="2"/>
+<line x1="70.0" y1="400.0" x2="70.0" y2="400.0" stroke="#2563eb" stroke-opacity="0.5"/>
+<circle cx="70.0" cy="400.0" r="4" fill="#2563eb"/>
+<text x="76.0" y="394.0">0</text>
+<line x1="164.2" y1="269.9" x2="164.2" y2="199.1" stroke="#2563eb" stroke-opacity="0.5"/>
+<circle cx="164.2" cy="234.5" r="4" fill="#2563eb"/>
+<text x="170.2" y="228.5">1</text>
+<line x1="248.3" y1="240.4" x2="248.3" y2="168.4" stroke="#2563eb" stroke-opacity="0.5"/>
+<circle cx="248.3" cy="204.4" r="4" fill="#2563eb"/>
+<text x="254.3" y="198.4">2</text>
+<line x1="347.7" y1="192.1" x2="347.7" y2="118.6" stroke="#2563eb" stroke-opacity="0.5"/>
+<circle cx="347.7" cy="155.3" r="4" fill="#2563eb"/>
+<text x="353.7" y="149.3">3</text>
+<line x1="449.2" y1="161.6" x2="449.2" y2="86.9" stroke="#2563eb" stroke-opacity="0.5"/>
+<circle cx="449.2" cy="124.2" r="4" fill="#2563eb"/>
+<text x="455.2" y="118.2">4</text>
+<line x1="553.8" y1="138.7" x2="553.8" y2="63.0" stroke="#2563eb" stroke-opacity="0.5"/>
+<circle cx="553.8" cy="100.9" r="4" fill="#2563eb"/>
+<text x="559.8" y="94.9">5</text>
+<line x1="656.7" y1="126.4" x2="656.7" y2="49.9" stroke="#2563eb" stroke-opacity="0.5"/>
+<circle cx="656.7" cy="88.2" r="4" fill="#2563eb"/>
+<text x="662.7" y="82.2">6</text>
+<line x1="760.3" y1="116.9" x2="760.3" y2="39.6" stroke="#2563eb" stroke-opacity="0.5"/>
+<circle cx="760.3" cy="78.2" r="4" fill="#2563eb"/>
+<text x="766.3" y="72.2">7</text>
+<line x1="865.9" y1="107.1" x2="865.9" y2="28.9" stroke="#2563eb" stroke-opacity="0.5"/>
+<circle cx="865.9" cy="68.0" r="4" fill="#2563eb"/>
+<text x="871.9" y="62.0">8</text>
+</svg>
