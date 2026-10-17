@@ -78,7 +78,7 @@ uint64_t board_compute_hash(const Board *b) {
     return h;
 }
 
-bool board_make_move(const Board *b, Move m, Board *out) {
+static void apply_move(const Board *b, Move m, Board *out) {
     Board *n = out;
     *n = *b;
 
@@ -133,8 +133,34 @@ bool board_make_move(const Board *b, Move m, Board *out) {
     n->hash ^= zobrist_side;
     if (us == BLACK)
         n->fullmove++;
+}
 
-    return !board_square_attacked(n, board_king_square(n, us), them);
+bool board_make_move(const Board *b, Move m, Board *out) {
+    apply_move(b, m, out);
+    return !board_square_attacked(out, board_king_square(out, b->side), b->side ^ 1);
+}
+
+Bitboard board_pinned(const Board *b) {
+    int us = b->side, them = us ^ 1, king = board_king_square(b, us);
+    const Bitboard *p = b->pieces[them];
+    Bitboard snipers = (rook_attacks(king, 0) & (p[ROOK] | p[QUEEN]))
+                     | (bishop_attacks(king, 0) & (p[BISHOP] | p[QUEEN]));
+    Bitboard pinned = 0;
+    while (snipers) {
+        Bitboard between = between_bb[king][pop_lsb(&snipers)] & b->all;
+        if (between && !(between & (between - 1)) && (between & b->occupied[us]))
+            pinned |= between;
+    }
+    return pinned;
+}
+
+bool board_make_move_fast(const Board *b, Move m, Board *out, Bitboard pinned, bool in_check) {
+    int from = move_from(m);
+    if (in_check || (pinned & bit(from)) || piece_type(b->squares[from]) == KING
+        || move_flags(m) == MF_EP_CAPTURE)
+        return board_make_move(b, m, out);
+    apply_move(b, m, out);
+    return true;
 }
 
 static int excess(int count, int initial) {

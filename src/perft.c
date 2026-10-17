@@ -11,11 +11,13 @@ uint64_t perft(const Board *b, int depth) {
 
     MoveList list;
     movegen_generate(b, &list);
+    Bitboard pinned = board_pinned(b);
+    bool in_check = board_in_check(b);
 
     uint64_t nodes = 0;
     for (int i = 0; i < list.count; i++) {
         Board next;
-        if (!board_make_move(b, list.moves[i], &next))
+        if (!board_make_move_fast(b, list.moves[i], &next, pinned, in_check))
             continue;
         assert(board_is_consistent(&next));
         nodes += depth == 1 ? 1 : perft(&next, depth - 1);

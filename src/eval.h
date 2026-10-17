@@ -29,6 +29,20 @@ typedef struct {
 int eval_evaluate(const Weights *weights, const Board *b);
 
 /*
+ * The same sum kept incrementally by the search: "psq" is the unclamped
+ * weight sum from white's view. eval_psq_delta gives its change for a move
+ * (from the board before the move), eval_from_psq the clamped evaluation for
+ * the side to move. eval_from_psq(eval_psq(w, b), b->side) == eval_evaluate(w, b).
+ */
+int eval_psq(const Weights *weights, const Board *b);
+int eval_psq_delta(const Weights *weights, const Board *before, Move m);
+
+static inline int eval_from_psq(int psq, int side) {
+    int score = side == WHITE ? psq : -psq;
+    return score > EVAL_MAX ? EVAL_MAX : score < -EVAL_MAX ? -EVAL_MAX : score;
+}
+
+/*
  * Weight files: "SCHW", version (uint32), feature count (uint32), then one
  * float32 per feature, all little-endian. The engine rounds to integers;
  * the tuner keeps floats.

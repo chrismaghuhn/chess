@@ -1,8 +1,21 @@
 #include "attacks.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "rng.h"
+
 Bitboard knight_attacks[64];
 Bitboard king_attacks[64];
 Bitboard pawn_attacks[2][64];
+Magic bishop_magics[64];
+Magic rook_magics[64];
+Bitboard between_bb[64][64];
+
+static Bitboard bishop_table[5248];
+static Bitboard rook_table[102400];
+
+static void init_magics(void);
 
 /*
  * Sliding pieces use plain rays for now: walk to the first blocker and cut
@@ -47,6 +60,21 @@ void attacks_init(void) {
                 rays[d][sq] |= bit(make_square(rf, rr));
         }
     }
+
+    init_magics();
+
+    /* Squares strictly between two squares on a common line. */
+    for (int a = 0; a < 64; a++) {
+        for (int b = 0; b < 64; b++) {
+            between_bb[a][b] = 0;
+            if (a == b)
+                continue;
+            if (rook_attacks_slow(a, 0) & bit(b))
+                between_bb[a][b] = rook_attacks_slow(a, bit(b)) & rook_attacks_slow(b, bit(a));
+            else if (bishop_attacks_slow(a, 0) & bit(b))
+                between_bb[a][b] = bishop_attacks_slow(a, bit(b)) & bishop_attacks_slow(b, bit(a));
+        }
+    }
 }
 
 static inline Bitboard ray_attacks(int dir, int sq, Bitboard occupied) {
@@ -61,12 +89,80 @@ static inline Bitboard ray_attacks(int dir, int sq, Bitboard occupied) {
     return attacks;
 }
 
-Bitboard bishop_attacks(int sq, Bitboard occupied) {
+Bitboard bishop_attacks_slow(int sq, Bitboard occupied) {
     return ray_attacks(NORTH_EAST, sq, occupied) | ray_attacks(SOUTH_EAST, sq, occupied)
          | ray_attacks(SOUTH_WEST, sq, occupied) | ray_attacks(NORTH_WEST, sq, occupied);
 }
 
-Bitboard rook_attacks(int sq, Bitboard occupied) {
+Bitboard rook_attacks_slow(int sq, Bitboard occupied) {
     return ray_attacks(NORTH, sq, occupied) | ray_attacks(EAST, sq, occupied)
          | ray_attacks(SOUTH, sq, occupied) | ray_attacks(WEST, sq, occupied);
+}
+
+/*
+ * Magic bitboards: the blockers that matter for a slider on sq (its rays
+ * without the board edge) are multiplied by a magic number, and the top
+ * bits of the product index a table of precomputed attacks. The magics are
+ * found at startup by trying sparse random numbers until no two blocker
+ * sets with different attacks collide; the fixed seed makes this the same
+ * every run.
+ */
+static Bitboard relevant_mask(int sq, Bitboard (*slow)(int, Bitboard)) {
+    Bitboard rank1 = 0xFFULL, rank8 = rank1 << 56;
+    Bitboard file_a = 0x0101010101010101ULL, file_h = file_a << 7;
+    Bitboard own_rank = rank1 << (8 * rank_of(sq)), own_file = file_a << file_of(sq);
+    Bitboard edges = ((rank1 | rank8) & ~own_rank) | ((file_a | file_h) & ~own_file);
+    return slow(sq, 0) & ~edges;
+}
+
+static void find_magics(Magic *magics, Bitboard *table, Bitboard (*slow)(int, Bitboard), uint64_t *rng) {
+    static Bitboard occupancy[4096], reference[4096];
+    static int epoch[4096], current;
+
+    Bitboard *next = table;
+    for (int sq = 0; sq < 64; sq++) {
+        Magic *m = &magics[sq];
+        m->mask = relevant_mask(sq, slow);
+        int bits = popcount(m->mask);
+        m->shift = 64 - (unsigned)bits;
+        m->attacks = next;
+
+        /* Every subset of the mask (carry-rippler enumeration). */
+        int size = 0;
+        Bitboard subset = 0;
+        do {
+            occupancy[size] = subset;
+            reference[size] = slow(sq, subset);
+            size++;
+            subset = (subset - m->mask) & m->mask;
+        } while (subset);
+
+        for (;;) {
+            uint64_t magic = rng_next(rng) & rng_next(rng) & rng_next(rng);
+            if (popcount((m->mask * magic) >> 56) < 6)
+                continue;
+            current++;
+            bool ok = true;
+            for (int i = 0; i < size && ok; i++) {
+                unsigned index = (unsigned)((occupancy[i] * magic) >> m->shift);
+                if (epoch[index] != current) {
+                    epoch[index] = current;
+                    next[index] = reference[i];
+                } else if (next[index] != reference[i]) {
+                    ok = false;
+                }
+            }
+            if (ok) {
+                m->magic = magic;
+                break;
+            }
+        }
+        next += (size_t)1 << bits;
+    }
+}
+
+static void init_magics(void) {
+    uint64_t rng = 0x4D41474943ULL; /* "MAGIC" */
+    find_magics(bishop_magics, bishop_table, bishop_attacks_slow, &rng);
+    find_magics(rook_magics, rook_table, rook_attacks_slow, &rng);
 }

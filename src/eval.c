@@ -19,6 +19,43 @@ int eval_evaluate(const Weights *weights, const Board *b) {
     return score;
 }
 
+/* Weight of a piece of `color` on sq, seen from its owner. */
+static inline int weight(const Weights *w, int color, int type, int sq) {
+    return w->w[type * 64 + (color == WHITE ? sq : sq ^ 56)];
+}
+
+int eval_psq(const Weights *weights, const Board *b) {
+    int score = 0;
+    for (int color = 0; color < 2; color++) {
+        int sign = color == WHITE ? 1 : -1;
+        for (int type = 0; type < 6; type++)
+            for (Bitboard bb = b->pieces[color][type]; bb;)
+                score += sign * weight(weights, color, type, pop_lsb(&bb));
+    }
+    return score;
+}
+
+int eval_psq_delta(const Weights *w, const Board *b, Move m) {
+    int us = b->side, them = us ^ 1;
+    int from = move_from(m), to = move_to(m), flags = move_flags(m);
+    int type = piece_type(b->squares[from]);
+
+    int own = weight(w, us, type, to) - weight(w, us, type, from), theirs = 0;
+    if (flags == MF_EP_CAPTURE)
+        theirs = weight(w, them, PAWN, to ^ 8);
+    else if (flags & MF_CAPTURE)
+        theirs = weight(w, them, piece_type(b->squares[to]), to);
+    if (flags & MF_PROMO)
+        own += weight(w, us, move_promo_type(m), to) - weight(w, us, PAWN, to);
+    else if (flags == MF_KING_CASTLE)
+        own += weight(w, us, ROOK, to - 1) - weight(w, us, ROOK, to + 1);
+    else if (flags == MF_QUEEN_CASTLE)
+        own += weight(w, us, ROOK, to + 1) - weight(w, us, ROOK, to - 2);
+
+    int delta = own + theirs; /* from the mover's view: a captured piece no longer counts against us */
+    return us == WHITE ? delta : -delta;
+}
+
 void weights_zero(Weights *weights) {
     memset(weights, 0, sizeof *weights);
 }

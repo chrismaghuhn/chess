@@ -13,8 +13,10 @@
 #include <string.h>
 #include <time.h>
 
+#include "attacks.h"
 #include "board.h"
 #include "movegen.h"
+#include "rng.h"
 #include "perft.h"
 
 typedef struct {
@@ -174,6 +176,25 @@ static int test_fens(void) {
     return failures;
 }
 
+/* Magic lookups must agree with walking the rays, for random blockers on every square. */
+static int test_magics(void) {
+    uint64_t rng = 0x5EED;
+    int failures = 0;
+    for (int sq = 0; sq < 64; sq++) {
+        for (int i = 0; i < 2000; i++) {
+            Bitboard occupied = rng_next(&rng) & rng_next(&rng);
+            if (bishop_attacks(sq, occupied) != bishop_attacks_slow(sq, occupied)
+                || rook_attacks(sq, occupied) != rook_attacks_slow(sq, occupied)) {
+                printf("FAIL magic attacks on square %d, blockers %016llx\n", sq, (unsigned long long)occupied);
+                failures++;
+                break;
+            }
+        }
+    }
+    printf("magics: %s\n", failures ? "FAILED" : "ok");
+    return failures;
+}
+
 /* The noisy generator must produce exactly the captures and promotions of the full one, in order. */
 static int test_noisy_movegen(void) {
     uint64_t rng = 0x9E3779B97F4A7C15ULL;
@@ -299,7 +320,7 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    int failures = test_fens() + test_noisy_movegen() + test_perft(max_nodes);
+    int failures = test_fens() + test_magics() + test_noisy_movegen() + test_perft(max_nodes);
     if (failures)
         printf("%d FAILED\n", failures);
     else

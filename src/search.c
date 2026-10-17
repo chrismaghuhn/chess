@@ -2,6 +2,7 @@
 
 #include "search.h"
 
+#include <assert.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -250,15 +251,17 @@ static void reward_history(int *entry, int depth) {
     *entry += bonus - *entry * bonus / HISTORY_MAX; /* stays within HISTORY_MAX */
 }
 
-static int qsearch(Search *s, const Board *b, int alpha, int beta, int ply) {
+/* psq: the incrementally kept weight sum of b (see eval_psq). */
+static int qsearch(Search *s, const Board *b, int psq, int alpha, int beta, int ply) {
     s->pv_len[ply] = 0;
+    assert(psq == eval_psq(s->weights, b));
     s->nodes++;
     if (ply > s->seldepth)
         s->seldepth = ply;
     if (should_stop(s))
         return 0;
     if (ply >= MAX_PLY - 1)
-        return eval_evaluate(s->weights, b);
+        return eval_from_psq(psq, b->side);
 
     /* In check there is no standing pat: try every evasion, none means mate. */
     bool in_check = board_in_check(b);
@@ -266,7 +269,7 @@ static int qsearch(Search *s, const Board *b, int alpha, int beta, int ply) {
     if (in_check) {
         best = -SCORE_MATE + ply;
     } else {
-        best = eval_evaluate(s->weights, b);
+        best = eval_from_psq(psq, b->side);
         if (best >= beta)
             return best;
         if (best > alpha)
@@ -280,13 +283,14 @@ static int qsearch(Search *s, const Board *b, int alpha, int beta, int ply) {
     else
         movegen_generate_noisy(b, &list);
     score_moves(s, b, &list, scores, 0, ply);
+    Bitboard pinned = list.count ? board_pinned(b) : 0;
 
     for (int i = 0; i < list.count; i++) {
         Move m = pick_move(&list, scores, i);
         Board next;
-        if (!board_make_move(b, m, &next))
+        if (!board_make_move_fast(b, m, &next, pinned, in_check))
             continue;
-        int score = -qsearch(s, &next, -beta, -alpha, ply + 1);
+        int score = -qsearch(s, &next, psq + eval_psq_delta(s->weights, b, m), -beta, -alpha, ply + 1);
         if (s->stopped)
             return 0;
         if (score > best) {
@@ -314,7 +318,7 @@ bool search_quiet(Search *s, const Board *b, uint64_t max_nodes, Board *leaf, in
     s->nodes = 0;
     s->stopped = false;
 
-    int result = qsearch(s, b, -SCORE_INF, SCORE_INF, 0);
+    int result = qsearch(s, b, eval_psq(s->weights, b), -SCORE_INF, SCORE_INF, 0);
     if (nodes)
         *nodes = s->nodes;
     s->limits = NULL;
@@ -332,8 +336,9 @@ bool search_quiet(Search *s, const Board *b, uint64_t max_nodes, Board *leaf, in
     return true;
 }
 
-static int negamax(Search *s, const Board *b, int depth, int alpha, int beta, int ply) {
+static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int beta, int ply) {
     s->pv_len[ply] = 0;
+    assert(psq == eval_psq(s->weights, b));
 
     bool root = ply == 0;
     if (!root && is_draw(s, b))
@@ -343,7 +348,7 @@ static int negamax(Search *s, const Board *b, int depth, int alpha, int beta, in
     if (in_check)
         depth++; /* never stop the search while in check */
     if (depth <= 0)
-        return qsearch(s, b, alpha, beta, ply);
+        return qsearch(s, b, psq, alpha, beta, ply);
 
     s->nodes++;
     if (ply > s->seldepth)
@@ -351,7 +356,7 @@ static int negamax(Search *s, const Board *b, int depth, int alpha, int beta, in
 
     if (!root) {
         if (ply >= MAX_PLY - 1)
-            return eval_evaluate(s->weights, b);
+            return eval_from_psq(psq, b->side);
         /* A mate found closer to the root can't be beaten here. */
         if (alpha < -SCORE_MATE + ply)
             alpha = -SCORE_MATE + ply;
@@ -379,6 +384,7 @@ static int negamax(Search *s, const Board *b, int depth, int alpha, int beta, in
     int64_t scores[MAX_MOVES];
     movegen_generate(b, &list);
     score_moves(s, b, &list, scores, hash_move, ply);
+    Bitboard pinned = board_pinned(b);
 
     int original_alpha = alpha;
     int best = -SCORE_INF;
@@ -397,13 +403,14 @@ static int negamax(Search *s, const Board *b, int depth, int alpha, int beta, in
     for (int i = 0; i < list.count; i++) {
         Move m = pick_move(&list, scores, i);
         Board next;
-        if (!board_make_move(b, m, &next))
+        if (!board_make_move_fast(b, m, &next, pinned, in_check))
             continue;
         legal++;
 
         int child_alpha = random_ties && alpha > -SCORE_INF ? alpha - 1 : alpha;
         s->hashes[s->hash_count++] = next.hash;
-        int score = -negamax(s, &next, depth - 1, -beta, -child_alpha, ply + 1);
+        int score = -negamax(s, &next, psq + eval_psq_delta(s->weights, b, m), depth - 1, -beta,
+                             -child_alpha, ply + 1);
         s->hash_count--;
         if (s->stopped)
             return 0;
@@ -512,10 +519,11 @@ SearchResult search_run(Search *s, const Game *game, const SearchLimits *limits,
         return result;
     }
 
+    int root_psq = eval_psq(s->weights, root);
     int max_depth = limits->depth > 0 && limits->depth < MAX_PLY ? limits->depth : MAX_PLY - 1;
     for (int depth = 1; depth <= max_depth; depth++) {
         s->seldepth = 0;
-        int score = negamax(s, root, depth, -SCORE_INF, SCORE_INF, 0);
+        int score = negamax(s, root, root_psq, depth, -SCORE_INF, SCORE_INF, 0);
         if (s->stopped)
             break;
 

@@ -190,7 +190,32 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 2 | Suche + UCI, alle Gewichte = 0 | Gen 0 spielt in einer GUI/cutechess legale Partien und findet Matt in 3 |
 | 3 | Lineare Bewertung, Gewichtsdatei, Selbstpartien, Datenformat | `engine selfplay` erzeugt Daten und misst die CPU-Zeit |
 | 4 | Tuner + Generationsschleife + Match-Messung | erste Kurve mit ≥ 5 Generationen; Gen N schlägt Gen 0 messbar |
-| 5 | Verbesserungen | bessere Suche (billigeres Training), weitere Merkmale, später kleines NNUE aus eigenen Daten |
+| 5 | Tempo (siehe unten) | Lauf 2 mit der schnellen Engine erreicht dieselbe Stärke wie Lauf 1 mit deutlich weniger CPU-Zeit |
+| 6 | Verbesserungen | weitere Merkmale, später kleines NNUE aus eigenen Daten |
+
+### Meilenstein 5: Tempo
+
+80 % des Trainingsaufwands sind Selbstpartien. Jede Beschleunigung der Engine verschiebt die Kurve nach links.
+
+Profil einer Selbstpartie (Gen-8-Gewichte, 5000 Knoten/Zug, gprof): Zugsortierung ~24 %, Bewertung ~18 %,
+Angriffe gleitender Figuren ~13 %, Legalitätsprüfung + Zug ausführen ~12 %, Zuggenerierung ~9 %.
+
+- **A. Schneller bei gleichem Verhalten.** Prüfstein: Bench-Fingerabdruck und Selbstpartien (mit und ohne
+  Gewichte) bleiben bitgleich, nur die CPU-Zeit sinkt.
+  1. Inkrementelle Bewertung: Die Suche rechnet pro Zug nur die Änderung, statt alle Figuren neu zu summieren
+  2. Billigere Sortierung: Hash-Zug zuerst probieren, die übrigen Züge erst bewerten, wenn er nicht abschneidet
+  3. Magic Bitboards für Läufer, Türme, Damen
+  4. Legalität über Fesselungen: Nur Königszüge, gefesselte Figuren, en passant und Züge im Schach brauchen den Test
+  **Ergebnis Phase A** (64 Selbstpartien, 5000 Knoten/Zug, 16 Threads, bitgleiche Ausgabe):
+  Gen-8-Gewichte 10,8 → 8,3 s CPU (−23 %), Null-Gewichte 13,1 → 9,6 s (−27 %); Bench 6,5 → 8,7 Mio.
+  Knoten/s; volle Perft-Suite 37 → 53 Mio. Knoten/s. Schritt 2 (Hash-Zug vor dem Bewerten) ist
+  zurückgestellt: Die übrigen Züge sähen dann neuere History-Werte, das ändert die Reihenfolge – und
+  brachte kein messbares Tempo. Die Startzeit wächst um 0,12 s (Suche nach den magischen Zahlen).
+- **B. Messwerkzeug für Suchänderungen:** Match zwischen zwei Engine-Binaries über UCI (Knoten oder Zeit),
+  damit eine neue Suche gegen die alte bei gleicher CPU-Zeit antreten kann; später SPRT
+- **C. Schlauere Suche** (ändert das Verhalten, jeweils per Match bei gleicher CPU-Zeit geprüft):
+  PVS, Null-Move-Pruning, Late Move Reductions, Aspiration Windows. Der Zufalls-Tie-Break an der Wurzel muss erhalten bleiben.
+- **D. Lauf 2** mit der schnellen Engine und gleichen Einstellungen; Kurve gegen Lauf 1 auf der CPU-Achse
 
 ## Ergebnisse
 

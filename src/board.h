@@ -45,6 +45,16 @@ void board_to_fen(const Board *b, char *buf, size_t size);
  */
 bool board_make_move(const Board *b, Move m, Board *out);
 
+/* Own pieces that are the only blocker between the own king and an enemy slider. */
+Bitboard board_pinned(const Board *b);
+
+/*
+ * board_make_move that skips the king test where a move cannot expose the
+ * king: no check, not a king move, not a pinned piece, not en passant.
+ * pinned and in_check must describe b (board_pinned, board_in_check).
+ */
+bool board_make_move_fast(const Board *b, Move m, Board *out, Bitboard pinned, bool in_check);
+
 bool board_square_attacked(const Board *b, int sq, int by_color);
 
 static inline int board_king_square(const Board *b, int color) {

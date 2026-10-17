@@ -97,6 +97,21 @@ static void test_eval(void) {
                 sum += features[k].sign * w.w[features[k].index];
             CHECK(n == popcount(b.all), "one feature per piece");
             CHECK(sum == eval_evaluate(&w, &b), "eval equals the feature sum");
+            CHECK(eval_from_psq(eval_psq(&w, &b), b.side) == eval_evaluate(&w, &b),
+                  "incremental sum equals the feature sum");
+
+            /* The search's incremental update must match a full recount after every legal move. */
+            MoveList legal;
+            movegen_legal(&b, &legal);
+            for (int k = 0; k < legal.count; k++) {
+                Board next;
+                board_make_move(&b, legal.moves[k], &next);
+                int want = eval_psq(&w, &next);
+                int got = eval_psq(&w, &b) + eval_psq_delta(&w, &b, legal.moves[k]);
+                char move[6];
+                move_to_uci(legal.moves[k], move);
+                CHECK(want == got, "eval delta of %s: %d instead of %d", move, got, want);
+            }
             CHECK(eval_evaluate(&zero, &b) == 0, "zero weights give 0");
 
             Board flipped;
