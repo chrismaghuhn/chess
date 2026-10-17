@@ -197,6 +197,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 9 | NNUE (Experiment) | gestoppt: bessere Loss, aber schwächeres Spiel; Nebenbefund: lineares Modell auf allen Daten +97 Elo |
 | 10 | Daten v2: Suchbewertung als Label, kalibrierte Aufgabe | kein Gewinn (λ schadet, Aufgabe ~0); Entdeckung: Tuning ist >50 % der CPU |
 | 11 | Schnelleres Tuning | −37 % CPU bei gleicher Stärke (Geduld + Leaf-Cache) |
+| 12 | Langer Lauf (36 Generationen) | lineare Bewertung sättigt bei ~+100 gegen den Anker |
 
 ### Meilenstein 5: Tempo
 
@@ -482,6 +483,28 @@ Stellungen neu zu ruhigen Stellungen auf und trainierte fest 400 Epochen.
   in Lauf 12) – das wirkt wie ein eingebautes Gate.
 - Der Leaf-Cache (`FILE.leaves`, Version 2) trägt eine Prüfsumme und das Knotenlimit der Auflösung; beschädigte oder
   veraltete Caches werden neu berechnet.
+
+### Meilenstein 12: langer Lauf – wo sättigt die lineare Bewertung?
+
+Lauf 13 (`TUNER_FAST=on`, sonst Standard) von 12 auf 36 Generationen verlängert, ~20 min auf 16 Threads.
+
+| Gen | Training-CPU | Anker-Elo | Zuwachs je 8 Gen. |
+|---|---|---|---|
+| 12 | 1811 s | −22 ± 21 | |
+| 20 | 2706 s | +56 ± 21 | +78 |
+| 28 | 3845 s | +96 ± 21 | +40 |
+| 36 | 5015 s | +100 ± 21 | ~0 |
+
+- Die Kurve ist ab Gen 28 flach (Gen 28–36 zwischen +85 und +101). Das passt zu `linear-all` aus M9 (alle Daten
+  offline, ~+90 gegen den Anker): **die 384 PSQ-Gewichte sind ausgereizt**, nicht die Daten. Auch das Tuning findet
+  kaum noch etwas (beste Epoche meist 3–23).
+- Figurenwerte Gen 36: N 1.90, B 2.16, R 3.49, Q 6.90 (Bauer = 1) – Läufer > Springer, Dame hoch.
+- Der nächste Hebel ist also Kapazität der Bewertung (reichere Merkmale oder NNUE), jetzt mit 7,6 Mio. Stellungen
+  statt der ~2 Mio., an denen M6/M9 überangepasst haben – nicht mehr CPU für den linearen Lauf (also kein AWS-Lauf
+  dafür).
+- Messhinweis: Die CPU-Sekunden schwanken mit Takt und Temperatur. Gen 13 (nach einer Pause) brauchte für gleich
+  viele Knoten 65 s, Gen 12 und Gen 20–36 ~105–115 s. Die Knotenzahl wäre das stabilere Kostenmaß; CPU-Vergleiche
+  zwischen Läufen haben deshalb ±10–20 % Unschärfe.
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 

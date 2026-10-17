@@ -1,0 +1,2 @@
+runs/run13-fast/weights/gen17.bin vs runs/run13-fast/weights/gen16.bin: +186 =55 -159, score 53.4%, Elo +23 +/- 32
+summary games=400 a_wins=186 draws=55 b_wins=159 score=0.5337 elo=23.5 elo_err=31.8 saturated=0 cpu_s=21.468 wall_s=1.445
