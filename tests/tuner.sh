@@ -39,28 +39,71 @@ val=$(timeout 60 "$tuner" --data "$data" --out "$tmp/tuned-val.bin" --epochs 60 
 [ "$(kv "$one" positions)" = "$(kv "$("$engine" data-info "$data" 0 | sed 's/^/summary /')" positions)" ] \
     || fail "tuner did not read every position"
 
-# Leaf cache: a second run reads every leaf from the cache and gives the same weights; a changed
-# data file invalidates its cache. Early stopping with patience ends before the epoch limit.
+# Leaf cache: leaves of all-zero weights are not kept (they find no quiet leaves). With real
+# weights a second run reads every leaf from the cache and gives the same weights as no cache.
 cp "$data" "$tmp/cache-data.bin"
-rm -f "$tmp/cache-data.bin.leaves"
-c1=$(timeout 60 "$tuner" --data "$tmp/cache-data.bin" --out "$tmp/cache1.bin" --epochs 30 --report 0 --leaf-cache on)
-c2=$(timeout 60 "$tuner" --data "$tmp/cache-data.bin" --out "$tmp/cache2.bin" --epochs 30 --report 0 --leaf-cache on)
+cp "$data" "$tmp/cache-more.bin"
+rm -f "$tmp"/cache-*.bin.leaves
+timeout 60 "$tuner" --data "$tmp/cache-data.bin" --out "$tmp/cache-zero.bin" --epochs 1 --report 0 \
+    --leaf-cache on >/dev/null
+[ -f "$tmp/cache-data.bin.leaves" ] && fail "leaves of all-zero weights cached"
+tune_cached() { # OUT DATA... -> summary line
+    out=$1
+    shift
+    for file in "$@"; do set -- "$@" --data "$file"; shift; done
+    timeout 60 "$tuner" "$@" --init "$tmp/tuned1.bin" --out "$out" --epochs 30 --report 0 --val-every 0 --leaf-cache on
+}
+timeout 60 "$tuner" --data "$tmp/cache-data.bin" --init "$tmp/tuned1.bin" --out "$tmp/cache0.bin" --epochs 30 \
+    --report 0 --val-every 0 >/dev/null
+c1=$(tune_cached "$tmp/cache1.bin" "$tmp/cache-data.bin")
+c2=$(tune_cached "$tmp/cache2.bin" "$tmp/cache-data.bin")
 [ -f "$tmp/cache-data.bin.leaves" ] || fail "no leaf cache written"
 [ "$(kv "$c1" cached)" = 0 ] && [ "$(kv "$c2" cached)" = "$(kv "$c2" positions)" ] \
     || fail "leaf cache not used: $(kv "$c1" cached) then $(kv "$c2" cached)"
-cmp -s "$tmp/cache1.bin" "$tmp/cache2.bin" || fail "cached leaves give other weights"
-timeout 60 "$tuner" --data "$tmp/cache-data.bin" --out "$tmp/cache0.bin" --epochs 30 --report 0 >/dev/null
-cmp -s "$tmp/cache1.bin" "$tmp/cache0.bin" || fail "leaf cache changes the first run"
+cmp -s "$tmp/cache0.bin" "$tmp/cache1.bin" || fail "leaf cache changes the first run"
+cmp -s "$tmp/cache0.bin" "$tmp/cache2.bin" || fail "cached leaves give other weights"
+
+# A new file next to a cached one: only the new one is resolved, same weights as without caches.
+timeout 60 "$tuner" --data "$tmp/cache-data.bin" --data "$tmp/cache-more.bin" --init "$tmp/tuned1.bin" \
+    --out "$tmp/cache-both0.bin" --epochs 30 --report 0 --val-every 0 >/dev/null
+c4=$(tune_cached "$tmp/cache-both.bin" "$tmp/cache-data.bin" "$tmp/cache-more.bin")
+[ $(($(kv "$c4" cached) * 2)) -eq "$(kv "$c4" positions)" ] || fail "partly cached run: $c4"
+cmp -s "$tmp/cache-both0.bin" "$tmp/cache-both.bin" || fail "partly cached run gives other weights"
+
+# A damaged cache (changed, cut or extended) is not used; the run is the same as without it.
+cp "$tmp/cache-data.bin.leaves" "$tmp/good.leaves"
+for damage in "d[40] ^= 1" "d = d[:-1]" "d += bytes(1)"; do
+    cp "$tmp/good.leaves" "$tmp/cache-data.bin.leaves"
+    python3 -c "
+import sys
+p = sys.argv[1]; d = bytearray(open(p, 'rb').read())
+$damage
+open(p, 'wb').write(d)" "$tmp/cache-data.bin.leaves"
+    c5=$(tune_cached "$tmp/cache5.bin" "$tmp/cache-data.bin")
+    [ "$(kv "$c5" cached)" = 0 ] || fail "damaged leaf cache used ($damage)"
+    cmp -s "$tmp/cache0.bin" "$tmp/cache5.bin" || fail "damaged leaf cache changed the weights ($damage)"
+done
+
+# A changed data file invalidates its cache.
 python3 -c '
 import sys
 p = sys.argv[1]; d = bytearray(open(p, "rb").read())
 d[16 + 28] = (d[16 + 28] + 1) % 3   # another valid result for the first position
 open(p, "wb").write(d)' "$tmp/cache-data.bin"
-c3=$(timeout 60 "$tuner" --data "$tmp/cache-data.bin" --out "$tmp/cache3.bin" --epochs 30 --report 0 --leaf-cache on)
+c3=$(tune_cached "$tmp/cache3.bin" "$tmp/cache-data.bin")
 [ "$(kv "$c3" cached)" = 0 ] || fail "stale leaf cache used for a changed data file"
-p=$(timeout 60 "$tuner" --data "$data" --out "$tmp/patience.bin" --epochs 400 --patience 5 --report 0)
-[ "$(kv "$p" epochs)" -lt 400 ] && [ "$(kv "$p" epochs)" -le $(($(kv "$p" best_epoch) + 5)) ] \
-    || fail "patience did not stop early: $p"
+
+# Patience stops 5 epochs after the best one and returns the weights of that epoch: the same as a
+# run that simply stops there. (A small learning rate and a large validation set, so validation
+# improves for a while.)
+p=$(timeout 60 "$tuner" --data "$data" --out "$tmp/patience.bin" --epochs 400 --patience 5 --val-every 2 \
+    --lr 0.2 --report 0)
+pe=$(kv "$p" epochs)
+[ "$(kv "$p" best_epoch)" -gt 0 ] && [ "$pe" -lt 400 ] && [ "$pe" -eq $(($(kv "$p" best_epoch) + 5)) ] \
+    || fail "patience did not stop 5 epochs after the best: $p"
+timeout 60 "$tuner" --data "$data" --out "$tmp/patience-plain.bin" --epochs "$pe" --val-every 2 --lr 0.2 \
+    --report 0 >/dev/null
+cmp -s "$tmp/patience.bin" "$tmp/patience-plain.bin" || fail "patience does not return the best weights"
 
 # Starting from earlier weights (and resolving positions with them) is deterministic too.
 timeout 60 "$tuner" --data "$data" --init "$tmp/tuned1.bin" --out "$tmp/tuned-init1.bin" --epochs 5 \
@@ -140,6 +183,16 @@ python3 tools/plot.py -o "$run/anchor.svg" "$run/anchor.csv" "$run/generations.c
 # Other settings for an existing run are refused.
 GAMES=14 NODES=200 MATCH_GAMES=6 EPOCHS=10 THREADS=4 ENGINE="$engine" TUNER="$tuner" \
     sh tools/generations.sh "$run" 2 2>/dev/null && fail "resume with other settings accepted"
+
+# A run started before fast tuning was the default continues without it, unless asked otherwise.
+rm -rf "$tmp/old-run"
+cp -R "$run" "$tmp/old-run"
+sed -i 's/ tuner_fast=on//' "$tmp/old-run/settings.txt"
+redo=$(GAMES=12 NODES=200 MATCH_GAMES=6 EPOCHS=10 THREADS=4 ENGINE="$engine" TUNER="$tuner" \
+    sh tools/generations.sh "$tmp/old-run" 2 2>&1 | grep -c '^  ')
+[ "$redo" -eq 0 ] || fail "run without tuner_fast did not resume as it started ($redo steps redone)"
+TUNER_FAST=on GAMES=12 NODES=200 MATCH_GAMES=6 EPOCHS=10 THREADS=4 ENGINE="$engine" TUNER="$tuner" \
+    sh tools/generations.sh "$tmp/old-run" 2 2>/dev/null && fail "run without tuner_fast resumed with TUNER_FAST=on"
 
 # Redoing a step redoes everything after it: tune2, match2-vs-1, match2-vs-0.
 rm "$run/logs/tune2.txt"

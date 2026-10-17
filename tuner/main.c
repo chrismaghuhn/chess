@@ -54,7 +54,8 @@ static void usage(void) {
                     "             [--epochs N] [--lr X] [--threads N] [--val-every N] [--report N]\n"
                     "             [--lambda X: weight of self-play search scores in the target, 0..1]\n"
                     "             [--patience N: stop after N epochs without a better validation loss]\n"
-                    "             [--leaf-cache on|off: keep resolved quiet leaves next to each data file]\n");
+                    "             [--leaf-cache on|off: keep resolved quiet leaves next to each data file and\n"
+                    "              reuse them later, even with other --init weights; not with all-zero weights]\n");
 }
 
 /*
@@ -157,6 +158,8 @@ int main(int argc, char **argv) {
             " quiescence nodes\n", d.count, d.train_count, d.count - d.train_count, d.scored, d.cached, d.unresolved,
             d.resolve_nodes);
 
+    if (config.patience && d.train_count == d.count)
+        fprintf(stderr, "note: --patience has no effect without a validation set\n");
     TuneResult r = tune_run(&d, w, &config);
     if (!weights_save_float(out, w)) {
         fprintf(stderr, "cannot write %s\n", out);

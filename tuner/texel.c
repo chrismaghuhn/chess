@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "datafmt.h"
 #include "search.h"
@@ -80,8 +81,17 @@ static void *resolve_worker(void *arg) {
 
 /* ---- Leaf cache ---- */
 
+/*
+ * FILE.leaves: "SCHL", version, FEATURE_COUNT, QUIET_MAX_NODES (uint32 each),
+ * position count and FNV-1a hash of the data file's records (uint64 each),
+ * then per position the feature count (uint8) and that many packed features
+ * (uint16), and an FNV-1a hash of everything before it (uint64); all little-
+ * endian. Bump the version whenever features or search_quiet change meaning.
+ */
 static const char leaves_magic[4] = { 'S', 'C', 'H', 'L' };
-#define LEAVES_VERSION 1
+#define LEAVES_VERSION 2
+#define LEAVES_HEADER_SIZE 32
+#define FNV_OFFSET 0xCBF29CE484222325ULL
 
 static uint64_t fnv1a(uint64_t h, const uint8_t *p, size_t n) {
     for (size_t i = 0; i < n; i++)
@@ -89,68 +99,104 @@ static uint64_t fnv1a(uint64_t h, const uint8_t *p, size_t n) {
     return h;
 }
 
-static bool read_le(FILE *f, uint64_t *v, int bytes) {
-    uint8_t b[8];
-    if (fread(b, 1, (size_t)bytes, f) != (size_t)bytes)
-        return false;
-    *v = 0;
+static void put_le(uint8_t *p, uint64_t v, int bytes) {
     for (int i = 0; i < bytes; i++)
-        *v |= (uint64_t)b[i] << (8 * i);
-    return true;
+        p[i] = (uint8_t)(v >> (8 * i));
 }
 
-static bool write_le(FILE *f, uint64_t v, int bytes) {
-    uint8_t b[8];
+static uint64_t get_le(const uint8_t *p, int bytes) {
+    uint64_t v = 0;
     for (int i = 0; i < bytes; i++)
-        b[i] = (uint8_t)(v >> (8 * i));
-    return fwrite(b, 1, (size_t)bytes, f) == (size_t)bytes;
+        v |= (uint64_t)p[i] << (8 * i);
+    return v;
 }
 
-/* Loads the cached leaves of positions [first, first + count); false if missing or stale. */
+static bool leaves_name(char *name, size_t size, const char *path) {
+    int n = snprintf(name, size, "%s.leaves", path);
+    return n > 0 && (size_t)n < size;
+}
+
+/* Loads the cached leaves of positions [first, first + count); false if missing, stale or damaged. */
 static bool load_leaves(TuneData *d, const char *path, size_t first, size_t count, uint64_t hash) {
     char name[4096];
-    snprintf(name, sizeof name, "%s.leaves", path);
+    if (!leaves_name(name, sizeof name, path))
+        return false;
     FILE *f = fopen(name, "rb");
     if (!f)
         return false;
-    char magic[4];
-    uint64_t version, features, n, stored_hash;
-    bool ok = fread(magic, 1, 4, f) == 4 && memcmp(magic, leaves_magic, 4) == 0 && read_le(f, &version, 4)
-           && version == LEAVES_VERSION && read_le(f, &features, 4) && features == FEATURE_COUNT
-           && read_le(f, &n, 8) && n == count && read_le(f, &stored_hash, 8) && stored_hash == hash;
-    for (size_t i = first; ok && i < first + count; i++) {
-        uint64_t k = 0, packed = 0;
-        ok = read_le(f, &k, 1) && k <= MAX_ACTIVE_FEATURES;
-        for (uint64_t j = 0; ok && j < k; j++) {
-            ok = read_le(f, &packed, 2) && (packed & ~FEATURE_NEGATIVE) < FEATURE_COUNT;
-            d->features[i][j] = (PackedFeature)packed;
-        }
-        d->feature_count[i] = (uint8_t)k;
+    long size = fseek(f, 0, SEEK_END) == 0 ? ftell(f) : -1;
+    size_t max_size = LEAVES_HEADER_SIZE + count * (1 + 2 * MAX_ACTIVE_FEATURES) + 8;
+    if (size < LEAVES_HEADER_SIZE + 8 || (size_t)size > max_size || fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return false;
     }
-    ok = ok && fgetc(f) == EOF;
+    uint8_t *buf = checked_calloc((size_t)size, 1);
+    bool ok = fread(buf, 1, (size_t)size, f) == (size_t)size;
     fclose(f);
+
+    size_t payload_end = (size_t)size - 8;
+    ok = ok && memcmp(buf, leaves_magic, 4) == 0 && get_le(buf + 4, 4) == LEAVES_VERSION
+      && get_le(buf + 8, 4) == FEATURE_COUNT && get_le(buf + 12, 4) == QUIET_MAX_NODES
+      && get_le(buf + 16, 8) == count && get_le(buf + 24, 8) == hash
+      && get_le(buf + payload_end, 8) == fnv1a(FNV_OFFSET, buf, payload_end);
+    size_t at = LEAVES_HEADER_SIZE;
+    for (size_t i = first; ok && i < first + count; i++) {
+        int k = at < payload_end ? buf[at++] : -1;
+        ok = k >= 0 && k <= MAX_ACTIVE_FEATURES && at + 2 * (size_t)k <= payload_end;
+        for (int j = 0; ok && j < k; j++, at += 2) {
+            PackedFeature packed = (PackedFeature)get_le(buf + at, 2);
+            ok = (packed & ~FEATURE_NEGATIVE) < FEATURE_COUNT;
+            d->features[i][j] = packed;
+        }
+        d->feature_count[i] = ok ? (uint8_t)k : 0;
+    }
+    ok = ok && at == payload_end;
+    free(buf);
     return ok;
 }
 
 /* Writes the leaves of positions [first, first + count) next to the data file (atomically). */
 static void save_leaves(const TuneData *d, const char *path, size_t first, size_t count, uint64_t hash) {
     char name[4096], part[4200];
-    snprintf(name, sizeof name, "%s.leaves", path);
-    snprintf(part, sizeof part, "%s.part", name);
-    FILE *f = fopen(part, "wb");
-    if (!f)
-        return; /* only a cache */
-    bool ok = fwrite(leaves_magic, 1, 4, f) == 4 && write_le(f, LEAVES_VERSION, 4) && write_le(f, FEATURE_COUNT, 4)
-           && write_le(f, count, 8) && write_le(f, hash, 8);
-    for (size_t i = first; ok && i < first + count; i++) {
-        ok = write_le(f, d->feature_count[i], 1);
-        for (int j = 0; ok && j < d->feature_count[i]; j++)
-            ok = write_le(f, d->features[i][j], 2);
+    if (!leaves_name(name, sizeof name, path)) {
+        fprintf(stderr, "warning: path too long for a leaf cache: %s\n", path);
+        return;
     }
-    if (fclose(f) == 0 && ok)
-        rename(part, name);
-    else
+    snprintf(part, sizeof part, "%s.%ld.part", name, (long)getpid());
+
+    size_t size = LEAVES_HEADER_SIZE + 8;
+    for (size_t i = first; i < first + count; i++)
+        size += 1 + 2 * (size_t)d->feature_count[i];
+    uint8_t *buf = checked_calloc(size, 1);
+    memcpy(buf, leaves_magic, 4);
+    put_le(buf + 4, LEAVES_VERSION, 4);
+    put_le(buf + 8, FEATURE_COUNT, 4);
+    put_le(buf + 12, QUIET_MAX_NODES, 4);
+    put_le(buf + 16, count, 8);
+    put_le(buf + 24, hash, 8);
+    size_t at = LEAVES_HEADER_SIZE;
+    for (size_t i = first; i < first + count; i++) {
+        buf[at++] = d->feature_count[i];
+        for (int j = 0; j < d->feature_count[i]; j++, at += 2)
+            put_le(buf + at, d->features[i][j], 2);
+    }
+    put_le(buf + at, fnv1a(FNV_OFFSET, buf, at), 8);
+
+    FILE *f = fopen(part, "wb");
+    bool ok = f && fwrite(buf, 1, size, f) == size;
+    ok = (f && fclose(f) == 0) && ok && rename(part, name) == 0;
+    if (!ok) {
         remove(part);
+        fprintf(stderr, "warning: cannot write leaf cache %s\n", name);
+    }
+    free(buf);
+}
+
+static bool all_zero(const Weights *w) {
+    for (int i = 0; i < FEATURE_COUNT; i++)
+        if (w->w[i])
+            return false;
+    return true;
 }
 
 bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, double lambda,
@@ -174,6 +220,9 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, d
         if (!f) {
             free(records);
             free(validation);
+            free(file_first);
+            free(file_count);
+            free(file_hash);
             return false;
         }
         if (d->count + count > capacity) {
@@ -188,7 +237,7 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, d
         int prev_ply = -2;
         file_first[p] = d->count;
         file_count[p] = count;
-        file_hash[p] = 0xCBF29CE484222325ULL;
+        file_hash[p] = FNV_OFFSET;
         for (uint64_t i = 0; i < count; i++) {
             uint8_t *r = records[d->count];
             if (!data_read(f, record_size, r)) {
@@ -196,6 +245,9 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, d
                 fclose(f);
                 free(records);
                 free(validation);
+                free(file_first);
+                free(file_count);
+                free(file_hash);
                 return false;
             }
             int ply = r[30] | r[31] << 8;
@@ -258,7 +310,8 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, d
     free(jobs);
     free(ids);
     free(records);
-    if (leaf_cache && !invalid)
+    /* Zero weights find no quiet leaves (every position stands pat), so such leaves are not kept. */
+    if (leaf_cache && !invalid && !all_zero(resolve_with))
         for (int p = 0; p < path_count; p++)
             if (!cached_file[p])
                 save_leaves(d, paths[p], file_first[p], file_count[p], file_hash[p]);

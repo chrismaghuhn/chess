@@ -49,6 +49,9 @@ typedef struct {
  * the weights of the first tuning that reads it – for self-play data that
  * is the generation that played it – so older data keeps somewhat older
  * leaves; that is the price for not redoing the work every generation.
+ * A cache is reused whatever weights are given now. Leaves resolved with
+ * all-zero weights are not cached (those weights find no quiet leaves), so
+ * generation 0's data is resolved by generation 1.
  */
 bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, double lambda,
                bool leaf_cache, const Weights *resolve_with, int threads, char *err, size_t err_size);

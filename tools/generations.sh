@@ -11,14 +11,15 @@
 #   RESIGN [off] calibrated resignation in self-play (on/off)
 #   TUNER_FAST [on] cheaper tuning: stop after 30 epochs without improvement, and resolve
 #                   each data file's quiet leaves only once (cached next to it); -41% CPU at the
-#                   same strength (M11). Runs started before M11 continue with TUNER_FAST=off.
+#                   same strength (M11). Runs started without it [off] continue without it.
 #   THREADS [all cores]                            ENGINE, TUNER: binaries
 #
 # Writes RUN_DIR/generations.csv; logs of every step go to RUN_DIR/logs.
 # Running it again skips steps whose log is complete, so an interrupted run
 # continues where it stopped. It refuses to continue with other GAMES, NODES,
-# MATCH_GAMES, EPOCHS, SEARCH or engine (search fingerprint) than the run was started with (THREADS may change: the
-# results do not depend on it). Once a step had to run, every later step runs
+# MATCH_GAMES, EPOCHS, SEARCH, LAMBDA, RESIGN, TUNER_FAST or engine (search
+# fingerprint) than the run was started with (THREADS may change: the results
+# do not depend on it). Once a step had to run, every later step runs
 # again too, so a redone step never mixes with stale results after it.
 #
 # val_loss is measured on a validation set that grows with the data (every
@@ -33,7 +34,7 @@ set -eu
 export LC_ALL=C # awk must write 0.5, not 0,5
 
 if [ $# -ne 2 ]; then
-    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
 fi
 run=$1
@@ -45,6 +46,9 @@ EPOCHS=${EPOCHS:-400}
 SEARCH=${SEARCH:-exact}
 LAMBDA=${LAMBDA:-0}
 RESIGN=${RESIGN:-off}
+if [ -z "${TUNER_FAST+set}" ] && [ -f "$run/settings.txt" ] && ! grep -q 'tuner_fast=' "$run/settings.txt"; then
+    TUNER_FAST=off # the default before M11: such runs continue as they started
+fi
 TUNER_FAST=${TUNER_FAST:-on}
 case "$TUNER_FAST" in
     on) tune_extra="--patience 30 --leaf-cache on" ;;
@@ -69,7 +73,8 @@ settings="games=$GAMES nodes=$NODES match_games=$MATCH_GAMES epochs=$EPOCHS sear
 if [ -f "$run/settings.txt" ]; then
     if [ "$(cat "$run/settings.txt")" != "$settings" ]; then
         echo "$run was started with: $(cat "$run/settings.txt")" >&2
-        echo "now asked for:  $settings; use a new RUN_DIR" >&2
+        echo "now asked for:  $settings" >&2
+        echo "continue with the same settings, or use a new RUN_DIR" >&2
         exit 1
     fi
 else
