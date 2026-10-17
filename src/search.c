@@ -36,7 +36,9 @@ static const Weights zero_weights;
 
 struct Search {
     TT tt;
+    unsigned options;       /* SEARCH_* switches */
     const Weights *weights;
+    bool zero_weights;      /* all weights 0: generation 0 */
     int piece_value[6];     /* learned: average weight of each piece type */
     int history[2][64][64]; /* [side][from][to] */
 
@@ -72,12 +74,48 @@ Search *search_new(size_t hash_mb) {
         free(s);
         return NULL;
     }
-    s->weights = &zero_weights;
+    s->options = SEARCH_DEFAULT;
+    search_set_weights(s, NULL);
     return s;
+}
+
+void search_set_options(Search *s, unsigned options) {
+    s->options = options;
+}
+
+bool search_parse_options(const char *text, unsigned *options) {
+    static const struct {
+        const char *name;
+        unsigned flag;
+    } names[] = { { "pvs", SEARCH_PVS }, { "nmp", SEARCH_NMP }, { "lmr", SEARCH_LMR } };
+
+    *options = 0;
+    if (strcmp(text, "none") == 0)
+        return true;
+    if (strcmp(text, "all") == 0) {
+        *options = SEARCH_ALL;
+        return true;
+    }
+    char buf[64];
+    snprintf(buf, sizeof buf, "%s", text);
+    for (char *name = strtok(buf, ","); name; name = strtok(NULL, ",")) {
+        size_t i = 0;
+        while (i < sizeof names / sizeof names[0] && strcmp(name, names[i].name) != 0)
+            i++;
+        if (i == sizeof names / sizeof names[0])
+            return false;
+        *options |= names[i].flag;
+    }
+    /* Null-move pruning and reductions rely on PVS's null-window searches. */
+    return !(*options & (SEARCH_NMP | SEARCH_LMR)) || (*options & SEARCH_PVS);
 }
 
 void search_set_weights(Search *s, const Weights *weights) {
     s->weights = weights ? weights : &zero_weights;
+
+    s->zero_weights = true;
+    for (int i = 0; i < FEATURE_COUNT; i++)
+        s->zero_weights = s->zero_weights && s->weights->w[i] == 0;
 
     /* Squares a piece never stood on in training keep weight 0 and are left out. */
     for (int type = 0; type < 6; type++) {
@@ -380,9 +418,41 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
             return score;
     }
 
+    /*
+     * Null-move pruning: if passing the move still leaves us at or above
+     * beta in a shallower search, a real move will too. Only outside the
+     * principal variation, not in check, and not with only king and pawns,
+     * where passing can be an advantage (zugzwang).
+     */
+    bool pv_node = beta - alpha > 1;
+    const Bitboard *own = b->pieces[b->side];
+    if ((s->options & SEARCH_NMP) && !root && !pv_node && !in_check && depth >= 3
+        && (own[KNIGHT] | own[BISHOP] | own[ROOK] | own[QUEEN])
+        && eval_from_psq(psq, b->side) >= beta) {
+        Board null;
+        board_make_null(b, &null);
+        int reduction = 2 + depth / 4;
+        s->hashes[s->hash_count++] = null.hash;
+        int score = -negamax(s, &null, psq, depth - 1 - reduction, -beta, -beta + 1, ply + 1);
+        s->hash_count--;
+        if (s->stopped)
+            return 0;
+        if (score >= beta)
+            return score >= SCORE_MATE_BOUND ? beta : score;
+    }
+
     MoveList list;
     int64_t scores[MAX_MOVES];
     movegen_generate(b, &list);
+    if (root && s->limits->seed && !s->zero_weights) {
+        uint64_t rng = s->limits->seed;
+        for (int i = list.count - 1; i > 0; i--) {
+            int j = (int)rng_below(&rng, (uint64_t)i + 1);
+            Move tmp = list.moves[i];
+            list.moves[i] = list.moves[j];
+            list.moves[j] = tmp;
+        }
+    }
     score_moves(s, b, &list, scores, hash_move, ply);
     Bitboard pinned = board_pinned(b);
 
@@ -392,11 +462,16 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
     int legal = 0;
 
     /*
-     * With a seed, the root picks at random among all moves with the best
-     * score. To tell "equal" from "worse", later root moves are searched
-     * with alpha one lower, so a tie comes back as an exact score.
+     * With a seed, ties at the root are broken at random. With all weights
+     * zero (generation 0) every move scores the same, so the root finds all
+     * moves with the best score exactly: later root moves are searched with
+     * alpha one lower, so a tie comes back as an exact score, and one of
+     * them is drawn. That costs almost a ply. With learned weights exact
+     * ties are rare (~1.5% of root moves), and shuffling the root moves
+     * before ordering is enough: equally ordered moves then come in random
+     * order, at no cost.
      */
-    bool random_ties = root && s->limits->seed;
+    bool random_ties = root && s->limits->seed && s->zero_weights;
     Move ties[MAX_MOVES];
     int tie_count = 0;
 
@@ -407,10 +482,29 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
             continue;
         legal++;
 
-        int child_alpha = random_ties && alpha > -SCORE_INF ? alpha - 1 : alpha;
+        int child_psq = psq + eval_psq_delta(s->weights, b, m);
         s->hashes[s->hash_count++] = next.hash;
-        int score = -negamax(s, &next, psq + eval_psq_delta(s->weights, b, m), depth - 1, -beta,
-                             -child_alpha, ply + 1);
+        int score;
+        if (root || !(s->options & SEARCH_PVS) || legal == 1) {
+            int child_alpha = random_ties && alpha > -SCORE_INF ? alpha - 1 : alpha;
+            score = -negamax(s, &next, child_psq, depth - 1, -beta, -child_alpha, ply + 1);
+        } else {
+            /*
+             * PVS: after the first move, only ask whether a move beats alpha
+             * (null window), and search it properly if it does. Late quiet
+             * moves are asked at reduced depth first (LMR).
+             */
+            int reduction = 0;
+            if ((s->options & SEARCH_LMR) && depth >= 3 && legal > 3 && !in_check
+                && !move_is_capture(m) && !move_is_promo(m) && m != s->killers[ply][0]
+                && m != s->killers[ply][1] && !board_in_check(&next))
+                reduction = legal > 8 && depth >= 5 ? 2 : 1;
+            score = -negamax(s, &next, child_psq, depth - 1 - reduction, -alpha - 1, -alpha, ply + 1);
+            if (score > alpha && reduction && !s->stopped)
+                score = -negamax(s, &next, child_psq, depth - 1, -alpha - 1, -alpha, ply + 1);
+            if (score > alpha && score < beta && !s->stopped)
+                score = -negamax(s, &next, child_psq, depth - 1, -beta, -alpha, ply + 1);
+        }
         s->hash_count--;
         if (s->stopped)
             return 0;

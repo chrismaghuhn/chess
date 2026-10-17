@@ -29,6 +29,7 @@ typedef struct {
     uint64_t seed;
     int hash_mb;      /* per thread */
     const char *weights_path;
+    unsigned options; /* search options */
     const char *out_path;
 } Config;
 
@@ -156,6 +157,7 @@ static void *worker(void *arg) {
         exit(1);
     }
     search_set_weights(s, &sp->weights);
+    search_set_options(s, sp->cfg.options);
 
     for (;;) {
         pthread_mutex_lock(&sp->lock);
@@ -172,7 +174,7 @@ static void *worker(void *arg) {
 static void usage(void) {
     fprintf(stderr,
             "usage: engine selfplay --out FILE [--games N] [--nodes N] [--threads N]\n"
-            "                       [--weights FILE] [--seed N] [--random-plies 0..%d]\n"
+            "                       [--weights FILE] [--search OPTS] [--seed N] [--random-plies 0..%d]\n"
             "                       [--max-plies N] [--hash MB]\n",
             MAX_RANDOM_PLIES);
 }
@@ -211,6 +213,8 @@ static bool parse_args(int argc, char **argv, Config *c) {
             c->out_path = value;
         else if (strcmp(key, "--weights") == 0)
             c->weights_path = value;
+        else if (strcmp(key, "--search") == 0)
+            ok = search_parse_options(value, &c->options);
         else if (strcmp(key, "--games") == 0)
             ok = parse_int(value, &c->games);
         else if (strcmp(key, "--nodes") == 0)
@@ -249,7 +253,7 @@ static bool parse_args(int argc, char **argv, Config *c) {
 int selfplay_main(int argc, char **argv) {
     Config c = {
         .games = 100, .threads = 1, .nodes = 5000, .random_plies = 8, .max_plies = 400,
-        .seed = 1, .hash_mb = 4,
+        .seed = 1, .hash_mb = 4, .options = SEARCH_DEFAULT,
     };
     if (!parse_args(argc, argv, &c)) {
         usage();

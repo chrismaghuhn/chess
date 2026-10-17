@@ -100,7 +100,8 @@ static SearchResult search_fen(const char *fen, int depth, Game *game) {
     return search_run(search, game, &limits, false);
 }
 
-static void test_mates(void) {
+static void test_mates_with(unsigned options, const char *label) {
+    search_set_options(search, options);
     static const struct {
         const char *name;
         const char *fen;
@@ -121,12 +122,12 @@ static void test_mates(void) {
         Board b;
         board_from_fen(&b, cases[i].fen);
         int oracle = oracle_mate(&b, distance);
-        CHECK(oracle == expected, "%s: oracle says %d, test expects %d", cases[i].name, oracle, expected);
+        CHECK(oracle == expected, "%s (%s): oracle says %d, test expects %d", cases[i].name, label, oracle, expected);
 
         Game game;
         SearchResult r = search_fen(cases[i].fen, 2 * distance + 2, &game);
         int found = search_mate_moves(r.score);
-        CHECK(found == expected, "%s: search reports mate %d (score %d)", cases[i].name, found, r.score);
+        CHECK(found == expected, "%s (%s): search reports mate %d (score %d)", cases[i].name, label, found, r.score);
 
         if (expected > 0) {
             Board next;
@@ -135,9 +136,23 @@ static void test_mates(void) {
             char move[6] = "0000";
             if (r.best)
                 move_to_uci(r.best, move);
-            CHECK(mates, "%s: best move %s does not mate in %d", cases[i].name, move, expected);
+            CHECK(mates, "%s (%s): best move %s does not mate in %d", cases[i].name, label, move, expected);
         }
-    }
+    }    search_set_options(search, SEARCH_DEFAULT);
+}
+
+/* Every search variant must still find exact mate distances. */
+static void test_mates(void) {
+    test_mates_with(0, "plain alpha-beta");
+    test_mates_with(SEARCH_PVS, "pvs");
+    test_mates_with(SEARCH_ALL, "pvs+nmp+lmr");
+
+    unsigned options;
+    CHECK(search_parse_options("pvs,lmr", &options) && options == (SEARCH_PVS | SEARCH_LMR), "parse pvs,lmr");
+    CHECK(search_parse_options("all", &options) && options == SEARCH_ALL, "parse all");
+    CHECK(search_parse_options("none", &options) && options == 0, "parse none");
+    CHECK(!search_parse_options("nmp", &options), "nmp without pvs accepted");
+    CHECK(!search_parse_options("pvs,fast", &options), "unknown option accepted");
 }
 
 static void test_no_legal_moves(void) {

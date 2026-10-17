@@ -140,6 +140,17 @@ bool board_make_move(const Board *b, Move m, Board *out) {
     return !board_square_attacked(out, board_king_square(out, b->side), b->side ^ 1);
 }
 
+void board_make_null(const Board *b, Board *out) {
+    *out = *b;
+    if (out->ep != SQ_NONE) {
+        out->hash ^= zobrist_ep[file_of(out->ep)];
+        out->ep = SQ_NONE;
+    }
+    out->side ^= 1;
+    out->hash ^= zobrist_side;
+    out->halfmove = 0; /* nothing before a pass can repeat across it */
+}
+
 Bitboard board_pinned(const Board *b) {
     int us = b->side, them = us ^ 1, king = board_king_square(b, us);
     const Bitboard *p = b->pieces[them];

@@ -13,7 +13,7 @@
 #include "selfplay.h"
 #include "uci.h"
 
-#define BENCH_DEPTH 7
+#define BENCH_DEPTH 10
 
 static const char *bench_fens[] = {
     START_FEN,
@@ -28,8 +28,9 @@ static const char *bench_fens[] = {
  * Fixed-depth search over a few positions. The node count is a fingerprint
  * of the search: it changes exactly when search behavior changes.
  */
-static int bench(int depth) {
+static int bench(int depth, unsigned options) {
     Search *s = search_new(16);
+    search_set_options(s, options);
     SearchLimits limits;
     search_limits_init(&limits);
     limits.depth = depth;
@@ -66,7 +67,12 @@ int main(int argc, char **argv) {
         return data_info_main(argc - 1, argv + 1);
     if (argc >= 2 && strcmp(argv[1], "bench") == 0) {
         int depth = argc >= 3 ? atoi(argv[2]) : BENCH_DEPTH;
-        return bench(depth > 0 ? depth : 1);
+        unsigned options = SEARCH_DEFAULT;
+        if (argc >= 4 && !search_parse_options(argv[3], &options)) {
+            fprintf(stderr, "usage: engine bench [depth] [none|all|pvs,nmp,lmr]\n");
+            return 2;
+        }
+        return bench(depth > 0 ? depth : 1, options);
     }
 
     uci_loop();

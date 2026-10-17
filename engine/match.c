@@ -26,12 +26,13 @@
 typedef struct {
     int pairs;
     int threads;
-    uint64_t nodes;
+    uint64_t nodes[2]; /* per move, for A and B */
     int random_plies;
     int max_plies;
     uint64_t seed;
     int hash_mb;
     const char *paths[2];
+    unsigned options[2]; /* search options of A and B */
 } Config;
 
 typedef struct {
@@ -61,7 +62,7 @@ static int play(const Config *c, Search *searchers[2], const Game *opening, int 
         int mover = g.board.side == a_color ? 0 : 1;
         SearchLimits limits;
         search_limits_init(&limits);
-        limits.nodes = c->nodes;
+        limits.nodes = c->nodes[mover];
         limits.seed = rng_next(rng) | 1;
         game_play(&g, search_run(searchers[mover], &g, &limits, false).best);
         ply++;
@@ -80,8 +81,10 @@ static void *worker(void *arg) {
         fprintf(stderr, "out of memory\n");
         exit(1);
     }
-    search_set_weights(searchers[0], &m->weights[0]);
-    search_set_weights(searchers[1], &m->weights[1]);
+    for (int k = 0; k < 2; k++) {
+        search_set_weights(searchers[k], &m->weights[k]);
+        search_set_options(searchers[k], c->options[k]);
+    }
 
     Board start;
     board_from_fen(&start, START_FEN);
@@ -174,16 +177,19 @@ static bool parse_int(const char *s, int *out) {
 }
 
 static void usage(void) {
-    fprintf(stderr, "usage: engine match [--a FILE|zero] [--b FILE|zero] [--games N] [--nodes N]\n"
+    fprintf(stderr, "usage: engine match [--a FILE|zero] [--b FILE|zero] [--a-search OPTS] [--b-search OPTS]\n"
+                    "                    [--games N] [--nodes N] [--a-nodes N] [--b-nodes N]\n"
                     "                    [--threads N] [--seed N] [--random-plies N] [--max-plies N]\n"
                     "                    [--hash MB]\n"
-                    "Games are played in pairs with colors swapped; zero means all weights 0.\n");
+                    "Games are played in pairs with colors swapped; zero means all weights 0.\n"
+                    "OPTS: none, all, or a list like pvs,nmp,lmr (default: the engine default).\n");
 }
 
 int match_main(int argc, char **argv) {
     Config c = {
-        .pairs = 100, .threads = 1, .nodes = 5000, .random_plies = 8, .max_plies = 400,
+        .pairs = 100, .threads = 1, .nodes = { 5000, 5000 }, .random_plies = 8, .max_plies = 400,
         .seed = 1, .hash_mb = 4, .paths = { "zero", "zero" },
+        .options = { SEARCH_DEFAULT, SEARCH_DEFAULT },
     };
     for (int i = 1; i < argc; i += 2) {
         const char *key = argv[i], *value = i + 1 < argc ? argv[i + 1] : NULL;
@@ -195,10 +201,18 @@ int match_main(int argc, char **argv) {
             c.paths[0] = value;
         else if (strcmp(key, "--b") == 0)
             c.paths[1] = value;
+        else if (strcmp(key, "--a-search") == 0)
+            ok = search_parse_options(value, &c.options[0]);
+        else if (strcmp(key, "--b-search") == 0)
+            ok = search_parse_options(value, &c.options[1]);
         else if (strcmp(key, "--games") == 0)
             ok = parse_int(value, &games) && games >= 2 && games % 2 == 0 && (c.pairs = games / 2);
         else if (strcmp(key, "--nodes") == 0)
-            ok = parse_u64(value, &c.nodes) && c.nodes > 0;
+            ok = parse_u64(value, &c.nodes[0]) && c.nodes[0] > 0 && (c.nodes[1] = c.nodes[0]);
+        else if (strcmp(key, "--a-nodes") == 0)
+            ok = parse_u64(value, &c.nodes[0]) && c.nodes[0] > 0;
+        else if (strcmp(key, "--b-nodes") == 0)
+            ok = parse_u64(value, &c.nodes[1]) && c.nodes[1] > 0;
         else if (strcmp(key, "--threads") == 0)
             ok = parse_int(value, &c.threads) && c.threads >= 1 && c.threads <= 256;
         else if (strcmp(key, "--seed") == 0)

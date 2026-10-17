@@ -215,6 +215,33 @@ Angriffe gleitender Figuren ~13 %, Legalitätsprüfung + Zug ausführen ~12 %, Z
   damit eine neue Suche gegen die alte bei gleicher CPU-Zeit antreten kann; später SPRT
 - **C. Schlauere Suche** (ändert das Verhalten, jeweils per Match bei gleicher CPU-Zeit geprüft):
   PVS, Null-Move-Pruning, Late Move Reductions, Aspiration Windows. Der Zufalls-Tie-Break an der Wurzel muss erhalten bleiben.
+  **Ergebnis Phase B/C** (Gen-8-Gewichte auf beiden Seiten, 1000 Partien, ±20 Elo = 95 %):
+  `engine match --a-search/--b-search` schaltet die Verfahren pro Seite (`selfplay --search`, `bench … OPTS`).
+
+  | Vergleich (5000 Knoten/Zug) | Elo |
+  |---|---|
+  | PVS gegen nichts | −6 |
+  | PVS + Null-Move gegen PVS | −6 |
+  | PVS + LMR gegen PVS | +14 |
+  | alle drei gegen nichts | +8 |
+  | Wurzelzüge mischen statt exakte Gleichstände suchen (ab Gen 1) | +13 (mit allen dreien: +26) |
+
+  | Knoten pro Zug (gleiche Suche) | Elo gegen 5000 |
+  |---|---|
+  | 10000 | +147 … +168 |
+  | 2500 | −195 |
+  | 1000 | −391 |
+  | 500 | −569 |
+  | 200 | −827 |
+
+  - Die Suchverfahren bringen bei 5000 Knoten (Tiefe ~4–5) wenig; sie sind trotzdem Standard (`SEARCH_DEFAULT`),
+    weil sie nichts kosten und bei längerer Bedenkzeit mehr bringen.
+  - Exakte Gleichstände an der Wurzel kosten fast einen Halbzug Tiefe. Sie bleiben nur bei Null-Gewichten
+    (Gen 0, wo jeder Zug gleich ist); mit gelernten Gewichten werden die Wurzelzüge nur gemischt.
+    Überraschend: Der Halbzug mehr Tiefe ist kaum Elo wert, doppelte Knoten dagegen ~+150.
+  - **Die Knotenzahl ist ein riesiger Stärkefaktor** (~+150 Elo pro Verdopplung). Ob mehr Knoten pro
+    Zug auch besseres *Training* pro CPU-Sekunde ergeben, muss Lauf 2 zeigen.
+  - Bench jetzt mit Tiefe 10 und allen Verfahren (Fingerabdruck 5682804 Knoten bei Null-Gewichten).
 - **D. Lauf 2** mit der schnellen Engine und gleichen Einstellungen; Kurve gegen Lauf 1 auf der CPU-Achse
 
 ## Ergebnisse

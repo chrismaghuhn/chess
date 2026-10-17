@@ -45,6 +45,9 @@ void board_to_fen(const Board *b, char *buf, size_t size);
  */
 bool board_make_move(const Board *b, Move m, Board *out);
 
+/* Passes the move (for null-move pruning). Only legal when not in check. */
+void board_make_null(const Board *b, Board *out);
+
 /* Own pieces that are the only blocker between the own king and an enemy slider. */
 Bitboard board_pinned(const Board *b);
 
