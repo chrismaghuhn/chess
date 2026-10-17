@@ -162,6 +162,12 @@ awk "BEGIN { exit !($last < 0.5 * $first) }" 2>/dev/null || fail "nnue-train can
 timeout 120 "$nnue_train" --data "$data" --resolve "$tmp/tuned1.bin" --out "$tmp/net3.bin" --hidden 16 \
     --train-games 10 --epochs 80 --batch 256 --lr 0.01 --wd 0 --threads 3 >/dev/null 2>&1 || fail "nnue-train 3 threads"
 cmp -s "$tmp/net1.bin" "$tmp/net3.bin" || fail "network depends on the thread count"
+# Matches with a network on one side (the debug build checks every incremental evaluation).
+nm=$(timeout 120 "$engine" match --a "$tmp/tuned1.bin" --a-net "$tmp/net1.bin" --b "$tmp/tuned1.bin" --games 4 \
+    --nodes 2000 --threads 2 2>/dev/null)
+[ $(($(kv "$nm" a_wins) + $(kv "$nm" draws) + $(kv "$nm" b_wins))) -eq 4 ] 2>/dev/null || fail "match with a network: $nm"
+printf '%s\n' "$nm" | grep -q "+ net $tmp/net1.bin vs" || fail "match does not name the network"
+
 # The quiet-move penalty makes the network part change less over a quiet move.
 rough=$(timeout 120 "$nnue_train" --data "$data" --resolve "$tmp/tuned1.bin" --out "$tmp/net-rough.bin" --hidden 16 \
     --train-games 10 --epochs 20 --batch 256 --lr 0.01 --threads 4 2>/dev/null)

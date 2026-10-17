@@ -22,7 +22,9 @@
  * X * ((r(position) + r(child)) * SIGMOID_SCALE / 4)^2, where r is the
  * network part of the evaluation (without the linear part): a quiet move
  * should hardly change what the network adds. X = 1 weighs that change like
- * a prediction error of the same size at an even position.
+ * a prediction error of the same size at an even position. r includes b2,
+ * so the penalty also keeps the network from learning a constant bonus for
+ * the side to move (tempo); the M13 networks were trained that way.
  */
 #include <errno.h>
 #include <inttypes.h>
@@ -370,11 +372,15 @@ static void *pass_worker(void *arg) {
                 nnue_backward(ps->net, in, n, &cache, (float)(2.0 * error * p * (1.0 - p) * SIGMOID_SCALE),
                               &ps->grads[c]);
 
+            /* The child is only needed for the penalty and for measuring (evaluation passes). */
             int cn = d->child_offset ? (int)(d->child_offset[i + 1] - d->child_offset[i]) : 0;
-            if (cn && ps->net->hidden) {
+            if (cn && ps->net->hidden && (ps->smooth > 0 || !ps->backward)) {
                 const uint16_t *cin = d->child_input + d->child_offset[i];
                 NnueCache child_cache;
-                double rho = network_part(ps->net, in, n, &cache) + network_part(ps->net, cin, cn, &child_cache);
+                double linear = 0;
+                for (int k = 0; k < n; k++)
+                    linear += ps->net->skip[in[k]];
+                double rho = (eval - linear) + network_part(ps->net, cin, cn, &child_cache);
                 change += fabs(rho);
                 changed++;
                 if (ps->backward && ps->smooth > 0) {
@@ -638,7 +644,22 @@ int main(int argc, char **argv) {
     pass->net = &best;
     double test = run_pass(pass, sets[TEST], d.in_split[TEST], false, NULL);
     double test_change = pass->mean_change;
-    if (!nnue_save(&best, out)) {
+    bool saved = nnue_save(&best, out);
+    for (int c = 0; c < CHUNKS; c++)
+        nnue_free(&pass->grads[c]);
+    free(pass);
+    Network *nets[] = { &net, &best, &grad, &m, &v };
+    for (size_t k = 0; k < sizeof nets / sizeof nets[0]; k++)
+        nnue_free(nets[k]);
+    for (int k = 0; k < 3; k++)
+        free(sets[k]);
+    free(d.offset);
+    free(d.input);
+    free(d.target);
+    free(d.split);
+    free(d.child_offset);
+    free(d.child_input);
+    if (!saved) {
         fprintf(stderr, "cannot write %s\n", out);
         return 1;
     }

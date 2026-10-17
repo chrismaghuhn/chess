@@ -148,9 +148,12 @@ bool nnue_quantize(const Network *net, QNetwork *q) {
         if (sum > bound)
             bound = sum;
     }
-    double qa = floor(32767.0 / bound);
+    double qa = floor((32767.0 - NNUE_MAX_ACTIVE) / bound); /* each of the 33 rounded terms may add 0.5 */
     if (qa > 4096)
         qa = 4096;
+    for (int i = 0; i < NNUE_INPUTS; i++)
+        if (!(fabsf(net->skip[i]) * NNUE_SKIP_UNITS < 1e8))
+            return false; /* the skip sums must stay far inside int32 */
     /* Output sums: 2 * padded products of at most qa * 32767 must fit in int32. */
     double w2_max = 0;
     for (int h = 0; h < 2 * H; h++)
@@ -161,7 +164,7 @@ bool nnue_quantize(const Network *net, QNetwork *q) {
     q->hidden = H;
     q->padded = P;
     q->qa = (int16_t)qa;
-    q->w1 = aligned_alloc(64, ((size_t)NNUE_INPUTS * (size_t)P * sizeof *q->w1 + 63) / 64 * 64);
+    q->w1 = aligned_alloc(64, ((size_t)NNUE_INPUTS * (size_t)P * sizeof *q->w1 + 63) / 64 * 64 + 64);
     q->b1 = aligned_alloc(64, ((size_t)P * sizeof *q->b1 + 63) / 64 * 64 + 64);
     q->skip = calloc(NNUE_INPUTS, sizeof *q->skip);
     q->w2 = aligned_alloc(64, ((size_t)2 * (size_t)P * sizeof *q->w2 + 63) / 64 * 64 + 64);
@@ -179,6 +182,26 @@ bool nnue_quantize(const Network *net, QNetwork *q) {
         q->b1[h] = (int16_t)(h < H ? lrint(net->b1[h] * qa) : 0);
         for (int k = 0; k < 2; k++)
             q->w2[k * P + h] = (int16_t)(h < H ? lrint(net->w2[k * H + h] * NNUE_QB) : 0);
+    }
+    /* Check the bound again on the rounded integers: b1 plus the 32 largest rows of every unit. */
+    for (int h = 0; h < H; h++) {
+        int top[NNUE_MAX_ACTIVE] = { 0 };
+        for (int i = 0; i < NNUE_INPUTS; i++) {
+            int v = abs(q->w1[(size_t)i * (size_t)P + (size_t)h]);
+            for (int k = 0; k < NNUE_MAX_ACTIVE; k++)
+                if (v > top[k]) {
+                    int t = top[k];
+                    top[k] = v;
+                    v = t;
+                }
+        }
+        long sum = abs(q->b1[h]);
+        for (int k = 0; k < NNUE_MAX_ACTIVE; k++)
+            sum += top[k];
+        if (sum > 32767) {
+            nnue_quantized_free(q);
+            return false;
+        }
     }
     q->b2 = net->b2 * NNUE_SCALE;
     q->out_scale = (float)(NNUE_SCALE / (qa * NNUE_QB));

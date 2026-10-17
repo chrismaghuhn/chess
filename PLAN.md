@@ -527,9 +527,9 @@ ohne Schlagen oder Umwandlung); zusätzlich bestraft wird X · ((r(Stellung) + r
 soll am Netz-Anteil kaum etwas ändern; der lineare Teil bleibt frei. Kein Vorwissen: nur eine Glattheitsannahme
 über die Struktur, die Werte lernt das Netz.
 
-| Netz (H = 32) | Test-Loss | r-Änderung über einen ruhigen Zug | Elo vs. linear (H = 0, Netz-Pfad), 5000 Knoten |
+| Netz (H = 32) | Test-Loss | mittlere \|r + r'\| über einen ruhigen Zug | Elo vs. linear (H = 0, Netz-Pfad), 5000 Knoten |
 |---|---|---|---|
-| ohne (M9) | 0,1187 | (Streuung 26 cp) | −62 ± 15 |
+| ohne (M9) | 0,1187 | – (Streuung über Geschwister 26 cp, anderes Maß) | −62 ± 15 |
 | `--smooth 1` | 0,1182 | 14 cp | +39 ± 14 |
 | `--smooth 10` | 0,1188 | 4,5 cp | +91 ± 15 |
 | `--smooth 30` | 0,1213 | 1,7 cp | +69 ± 15 |
@@ -555,7 +555,13 @@ soll am Netz-Anteil kaum etwas ändern; der lineare Teil bleibt frei. Kein Vorwi
   tiefsten gültigen Vorfahren aus, pro Zug nur die Figuren, die sich geändert haben (aus den Bitboards abgeleitet –
   deckt Rochade, en passant, Umwandlung und Nullzug ohne Sonderfälle ab). Die Debug-Build prüft jede Bewertung
   gegen eine Neuberechnung.
-- Tests: 4515 inkrementelle Updates gleich Neuberechnung; Integer vs. Float höchstens 2 Einheiten.
+- Tests: 4515 inkrementelle Updates gleich Neuberechnung; Integer vs. Float höchstens 2 Einheiten beim Testnetz,
+  bis 4 beim echten H = 32-Netz (die Überlaufschranke ist vorsichtig, QA dadurch ~5× kleiner als nötig).
+- Review: Die Schranke berücksichtigt jetzt auch das Runden (vorher hätte ein konstruiertes Netz knapp überlaufen
+  können; bei den echten Netzen war der größte Akkumulator ~5000 von 32767). `make test-debug` war wegen
+  Speicherlecks in `nnue-train` rot und ist wieder grün; ein Match mit Netz läuft jetzt in den Tests (in der
+  Debug-Build mit Prüfung jeder inkrementellen Bewertung). Die Glättung bestraft auch b2, also einen
+  Anzugsbonus des Netzes – so wurden die M13-Netze trainiert; ob ein freier b2 hilft, ist offen.
 
 | Netz `h32-s10-e60` gegen `linear-all` | Knoten/s (Netz / linear) | Elo |
 |---|---|---|

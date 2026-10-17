@@ -18,8 +18,9 @@
  * The skip part is a linear piece-square evaluation (768 weights, own and
  * enemy pieces separately); started from a linear model, the network only
  * has to learn what that misses. hidden = 0 leaves just the linear part.
- * The architecture is chosen by hand, all values are learned. This version
- * computes in float from scratch.
+ * The architecture is chosen by hand, all values are learned. Training and
+ * nnue_evaluate compute in float from scratch; the search uses the integer
+ * form below.
  */
 #define NNUE_INPUTS 768
 #define NNUE_HIDDEN_MAX 256
@@ -78,7 +79,8 @@ int nnue_evaluate(const Network *net, const Board *b);
  * plus the skip sum (64 units per evaluation unit). The search keeps one per
  * ply and updates it from the parent with just the pieces a move changed.
  * The output layer uses int16 weights (NNUE_QB units per 1.0) and int32
- * sums. Equal to nnue_evaluate up to rounding (about 1 unit).
+ * sums. Equal to nnue_evaluate up to rounding (a few units: at most 4 seen
+ * on the milestone 13 networks).
  */
 #define NNUE_SKIP_UNITS 64
 #define NNUE_LANES 16 /* hidden sizes are padded to a multiple of this */

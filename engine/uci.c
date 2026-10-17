@@ -208,17 +208,26 @@ static void cmd_setoption(Uci *u, char *args) {
                 nnue_free(&u->net);
             u->has_net = false;
         } else if (nnue_load(&net, value, err, sizeof err)) {
-            search_set_network(u->search, NULL);
-            if (u->has_net)
-                nnue_free(&u->net);
+            /* Switch only if the new network can be used; otherwise keep the old one. */
+            Network old = u->net;
+            bool had = u->has_net;
             u->net = net;
-            u->has_net = true;
             if (search_set_network(u->search, &u->net)) {
+                if (had)
+                    nnue_free(&old);
+                u->has_net = true;
                 printf("info string loaded network %s\n", value);
             } else {
-                printf("info string network %s cannot be used (weights too large or out of memory)\n", value);
                 nnue_free(&u->net);
-                u->has_net = false;
+                u->net = old;
+                if (!had || !search_set_network(u->search, &u->net)) {
+                    if (had)
+                        nnue_free(&u->net);
+                    u->has_net = false;
+                    search_set_network(u->search, NULL);
+                }
+                printf("info string network %s cannot be used (weights too large or out of memory)\n", value);
+                return;
             }
         } else {
             printf("info string %s\n", err);
