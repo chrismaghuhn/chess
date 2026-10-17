@@ -20,7 +20,7 @@ typedef struct {
     int inc[2];        /* ms per move per color */
     int movestogo;     /* 0 = not given */
     atomic_bool *stop; /* optional; setting it to true aborts the search */
-    uint64_t seed;     /* nonzero: shuffle root moves so ties are broken at random */
+    uint64_t seed;     /* nonzero: pick at random among equally scored root moves */
 } SearchLimits;
 
 typedef struct {

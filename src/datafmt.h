@@ -4,6 +4,7 @@
 #include <stdio.h>
 
 #include "board.h"
+#include "game.h"
 
 /*
  * Training data: a 16-byte header ("SCHD", version, record size, reserved;
@@ -17,8 +18,12 @@
  *   26      en passant square (64 = none)
  *   27      halfmove clock, capped at 255
  *   28      game result for the side to move: 0 loss, 1 draw, 2 win
- *   29      reserved (0)
+ *   29      why the game ended (GameEnd from game.h)
  *   30..31  ply of the position in its game
+ *
+ * Records of one game are stored in order, so a new game starts wherever
+ * the ply does not go up by one. Unused nibbles and the header's reserved
+ * word must be zero.
  */
 #define DATA_VERSION 1
 #define DATA_HEADER_SIZE 16
@@ -29,13 +34,14 @@ enum { RESULT_LOSS, RESULT_DRAW, RESULT_WIN };
 typedef struct {
     Board board;
     int result; /* RESULT_* for the side to move */
+    GameEnd end;
     int ply;
 } DataPosition;
 
 void data_pack(const Board *b, int result, int ply, uint8_t out[DATA_RECORD_SIZE]);
 
-/* Sets a packed record's result from the game result seen from white (RESULT_*). */
-void data_set_result(uint8_t record[DATA_RECORD_SIZE], int white_result);
+/* Fills in how the game ended: the result seen from white (RESULT_*) and why. */
+void data_set_outcome(uint8_t record[DATA_RECORD_SIZE], int white_result, GameEnd end);
 
 /* Returns false for records that do not describe a legal position. */
 bool data_unpack(const uint8_t in[DATA_RECORD_SIZE], DataPosition *out);

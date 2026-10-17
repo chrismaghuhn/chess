@@ -142,6 +142,55 @@ static void test_weight_files(const char *dir) {
 
     snprintf(bad, sizeof bad, "%s/does-not-exist.bin", dir);
     CHECK(!weights_load(bad, &loaded, err, sizeof err), "missing weight file accepted");
+
+    /* A good file with one thing broken at a time. */
+    snprintf(bad, sizeof bad, "%s/bad-weights.bin", dir);
+    static const struct {
+        const char *what;
+        long offset;
+        unsigned char byte;
+    } patches[] = {
+        { "version 2", 4, 2 },
+        { "feature count 383", 8, 127 },
+        { "one byte too many", 12 + 4 * FEATURE_COUNT, 0 },
+    };
+    for (size_t i = 0; i < sizeof patches / sizeof patches[0]; i++) {
+        weights_save_float(bad, f);
+        file = fopen(bad, "r+b");
+        fseek(file, patches[i].offset, SEEK_SET);
+        fputc(patches[i].byte, file);
+        fclose(file);
+        CHECK(!weights_load(bad, &loaded, err, sizeof err), "weight file with %s accepted", patches[i].what);
+    }
+
+    float g[FEATURE_COUNT];
+    memcpy(g, f, sizeof g);
+    g[5] = 0.0f / 0.0f;
+    weights_save_float(bad, g);
+    CHECK(!weights_load(bad, &loaded, err, sizeof err), "weight file with NaN accepted");
+
+    /* Rounding (half to even) and clamping. */
+    memset(g, 0, sizeof g);
+    g[0] = 20000.0f;
+    g[1] = -20000.0f;
+    g[2] = 2.5f;
+    g[3] = 3.5f;
+    g[4] = -2.5f;
+    g[5] = 7.49f;
+    weights_save_float(bad, g);
+    CHECK(weights_load(bad, &loaded, err, sizeof err) && loaded.w[0] == WEIGHT_MAX
+              && loaded.w[1] == -WEIGHT_MAX && loaded.w[2] == 2 && loaded.w[3] == 4
+              && loaded.w[4] == -2 && loaded.w[5] == 7,
+          "weight rounding and clamping");
+
+    Weights big;
+    for (int i = 0; i < FEATURE_COUNT; i++)
+        big.w[i] = WEIGHT_MAX;
+    Board queens;
+    board_from_fen(&queens, "4k3/8/8/8/8/8/8/QQQQKQQQ w - - 0 1");
+    CHECK(eval_evaluate(&big, &queens) == EVAL_MAX, "evaluation clamps at +EVAL_MAX");
+    board_from_fen(&queens, "4k3/8/8/8/8/8/8/QQQQKQQQ b - - 0 1");
+    CHECK(eval_evaluate(&big, &queens) == -EVAL_MAX, "evaluation clamps at -EVAL_MAX");
 }
 
 static void test_data_format(const char *dir) {
@@ -166,10 +215,10 @@ static void test_data_format(const char *dir) {
             uint8_t record[DATA_RECORD_SIZE];
             int result = (int)rng_below(&rng, 3), ply = written * 7;
             data_pack(&b, RESULT_DRAW, ply, record);
-            data_set_result(record, result);
+            data_set_outcome(record, result, (GameEnd)(written % END_COUNT));
             fwrite(record, 1, sizeof record, f);
 
-            /* data_set_result takes white's view; the record keeps the side to move's. */
+            /* data_set_outcome takes white's view; the record keeps the side to move's. */
             results[written] = b.side == WHITE ? result : RESULT_WIN - result;
             plies[written] = ply;
             b.fullmove = (uint16_t)(ply / 2 + 1);
@@ -194,7 +243,7 @@ static void test_data_format(const char *dir) {
         if (ok)
             board_to_fen(&pos.board, fen, sizeof fen);
         CHECK(ok && strcmp(fen, expected[i]) == 0 && pos.result == results[i] && pos.ply == plies[i]
-                  && board_is_consistent(&pos.board),
+                  && pos.end == (GameEnd)(i % END_COUNT) && board_is_consistent(&pos.board),
               "data round trip %d:\n  expected %s\n  got      %s", i, expected[i], fen);
     }
     fclose(f);
@@ -203,6 +252,41 @@ static void test_data_format(const char *dir) {
     uint8_t record[DATA_RECORD_SIZE] = { 0 };
     DataPosition pos;
     CHECK(!data_unpack(record, &pos), "empty record accepted");
+
+    /* Valid records with one byte broken. */
+    static const struct {
+        const char *what;
+        const char *fen;
+        int offset;
+        uint8_t value;
+    } broken[] = {
+        { "side 2", START_FEN, 24, 2 },
+        { "result 3", START_FEN, 28, 3 },
+        { "unknown game end", START_FEN, 29, END_COUNT },
+        { "piece code 12", START_FEN, 8, 0xCC },
+        { "en passant on the wrong rank", START_FEN, 26, E3 },
+        { "unused nibble set", "4k3/8/8/8/8/8/8/4K3 w - - 0 1", 9, 0x01 },
+        { "more than 32 pieces", START_FEN, 2, 0xFF },
+    };
+    for (size_t i = 0; i < sizeof broken / sizeof broken[0]; i++) {
+        Board b;
+        board_from_fen(&b, broken[i].fen);
+        data_pack(&b, RESULT_DRAW, 0, record);
+        CHECK(data_unpack(record, &pos), "unbroken record for %s rejected", broken[i].what);
+        record[broken[i].offset] = broken[i].value;
+        CHECK(!data_unpack(record, &pos), "record with %s accepted", broken[i].what);
+    }
+
+    /* The header's reserved word must be zero. */
+    f = fopen(path, "r+b");
+    fseek(f, 12, SEEK_SET);
+    fputc(1, f);
+    fclose(f);
+    CHECK(data_open(path, &count, err, sizeof err) == NULL, "data file with reserved header word accepted");
+    f = fopen(path, "r+b");
+    fseek(f, 12, SEEK_SET);
+    fputc(0, f);
+    fclose(f);
 
     /* Truncated files are rejected. */
     f = fopen(path, "ab");

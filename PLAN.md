@@ -111,17 +111,23 @@ log/      generations.csv
 - Laufen direkt in der Engine (`engine selfplay ...`), mehrere Threads, ohne UCI-Overhead
 - **Feste Knotenzahl pro Zug** statt Zeit, damit der Aufwand reproduzierbar und vergleichbar ist
 - Eröffnungsvielfalt: die ersten 8 Halbzüge zufällig (gleichverteilt über legale Züge)
-- Zufälliger Tie-Break: Die Wurzelzüge werden pro Zug mit einem Seed gemischt, gleich gut sortierte
-  Züge kommen so in zufälliger Reihenfolge dran (sonst spielt Gen 0 immer dieselbe Partie)
+- Zufälliger Tie-Break: Mit Seed wählt die Wurzel zufällig unter **allen gleich bewerteten** Zügen
+  (spätere Wurzelzüge werden dafür mit alpha − 1 gesucht, damit „gleich“ von „schlechter“ unterscheidbar
+  ist; pro Tiefe neu gewürfelt). Ein bloßes Mischen der Zugliste reicht nicht: Dann gewinnt bei
+  Gleichstand immer die Sortierung, und Gen 0 hätte immer geschlagen, wenn es ging.
 - Partieende nur nach Regeln: Matt, Patt, Wiederholung, 50 Züge, ungenügendes Material,
   plus festes Zuglimit (z. B. 400 Halbzüge → Remis). **Nie** nach Material abbrechen, das wäre Vorwissen.
 - Gespeichert wird jede Stellung nach der Eröffnungsphase mit dem Endergebnis der Partie
 - **Reproduzierbar:** Partie i hat immer denselben Seed, Partien werden in Nummernreihenfolge geschrieben.
   Gleicher Seed → bitgleiche Datei, egal mit wie vielen Threads (wird getestet).
 - Aufruf: `engine selfplay --out FILE [--games N] [--nodes N] [--threads N] [--weights FILE]
-  [--seed N] [--random-plies 8] [--max-plies 400] [--hash MB]`. Am Ende eine Zeile
+  [--seed N] [--random-plies 0..40, Standard 8] [--max-plies 400] [--hash MB]`. Am Ende eine Zeile
   `summary games=… positions=… nodes=… cpu_s=… wall_s=…` für das Generationen-Log.
-- `engine data-info FILE [n]` zeigt Ergebnisverteilung, Stellungen im Schach und n Beispiel-FENs
+- Zufällige Eröffnungen, in denen die Partie schon endet (auch Wiederholung), werden neu ausgewürfelt
+- Bei einem Schreibfehler bricht `selfplay` ab, ohne `summary`-Zeile, mit Exit-Code 1
+- `engine data-info FILE [n]` zeigt Ergebnisverteilung, Partieenden, Stellungen im Schach und n Beispiel-FENs
+  und prüft die Labels: innerhalb einer Partie wechselt das Ergebnis mit der Seite am Zug, nur Matt ist
+  entschieden, und die letzte Stellung einer Mattpartie gehört dem Gewinner
 - Erster Lauf (Gen 0, 200 Partien, 5000 Knoten/Zug, 8 Threads): 1,5 s Wandzeit, 12 s CPU,
   15.469 Stellungen; 51 Partien durch Matt entschieden, der Rest meist Wiederholung
 
@@ -138,10 +144,13 @@ log/      generations.csv
   | 26 | en-passant-Feld (64 = keins) |
   | 27 | Halbzugzähler, gekappt bei 255 |
   | 28 | Ergebnis aus Sicht der Seite am Zug: 0 verloren, 1 remis, 2 gewonnen |
-  | 29 | reserviert |
+  | 29 | Grund für das Partieende (`GameEnd`: Matt, Patt, Wiederholung, 50 Züge, Material, Zuglimit) |
   | 30–31 | Halbzug der Stellung in der Partie |
 
-- Beim Entpacken gelten dieselben Legalitätsprüfungen wie bei FEN (`board_setup`)
+- Partiegrenzen: Die Stellungen einer Partie stehen hintereinander, eine neue Partie beginnt, wo der Halbzug
+  nicht um 1 steigt (wichtig für eine Trainings-/Validierungs-Aufteilung nach Partien)
+- Beim Entpacken gelten dieselben Legalitätsprüfungen wie bei FEN (`board_setup`); ungenutzte Nibbles
+  und das reservierte Header-Wort müssen 0 sein
 - 10 Mio. Stellungen ≈ 320 MB
 
 ### Tuner (Texel-Tuning)

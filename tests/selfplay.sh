@@ -47,6 +47,27 @@ printf '%s\n' "$output" | grep -q '^bestmove ' || fail "uci search with weights"
 output=$(printf 'setoption name Weights value %s\nquit\n' "$tmp/missing.bin" | timeout 5 "$engine")
 printf '%s\n' "$output" | grep -q 'cannot open' || fail "uci reports a missing weight file"
 
+# Labels must match how each game ended (checked by data-info), for every end reason seen.
+labels=$("$engine" data-info "$tmp/four.bin" 0)
+case "$labels" in
+    *"games=12 "*"label_errors=0 "*) ;;
+    *) fail "labels or game count wrong: $labels" ;;
+esac
+
+# Bad arguments are rejected instead of being read as some other number.
+for args in "--nodes -1" "--nodes 10x" "--seed abc" "--games 0" "--random-plies 41"; do
+    # shellcheck disable=SC2086
+    timeout 5 "$engine" selfplay --out "$tmp/x.bin" $args 2>/dev/null
+    [ $? -eq 2 ] || fail "selfplay accepted $args"
+done
+
+# A write error ends the run with an error and no summary line.
+if [ -w /dev/full ]; then
+    output=$(timeout 30 "$engine" selfplay --games 50 --nodes 200 --out /dev/full 2>/dev/null)
+    [ $? -eq 1 ] || fail "write error not reported"
+    printf '%s\n' "$output" | grep -q summary && fail "summary printed after a write error"
+fi
+
 if [ "$failures" -ne 0 ]; then
     echo "$failures FAILED"
     exit 1

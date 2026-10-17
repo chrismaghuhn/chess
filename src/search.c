@@ -319,22 +319,21 @@ static int negamax(Search *s, const Board *b, int depth, int alpha, int beta, in
     MoveList list;
     int scores[MAX_MOVES];
     movegen_generate(b, &list);
-    if (root && s->limits->seed) {
-        /* Equal ordering scores keep list order, so a shuffle breaks ties at random. */
-        uint64_t rng = s->limits->seed;
-        for (int i = list.count - 1; i > 0; i--) {
-            int j = (int)rng_below(&rng, (uint64_t)i + 1);
-            Move tmp = list.moves[i];
-            list.moves[i] = list.moves[j];
-            list.moves[j] = tmp;
-        }
-    }
     score_moves(s, b, &list, scores, hash_move, ply);
 
     int original_alpha = alpha;
     int best = -SCORE_INF;
     Move best_move = 0;
     int legal = 0;
+
+    /*
+     * With a seed, the root picks at random among all moves with the best
+     * score. To tell "equal" from "worse", later root moves are searched
+     * with alpha one lower, so a tie comes back as an exact score.
+     */
+    bool random_ties = root && s->limits->seed;
+    Move ties[MAX_MOVES];
+    int tie_count = 0;
 
     for (int i = 0; i < list.count; i++) {
         Move m = pick_move(&list, scores, i);
@@ -343,15 +342,21 @@ static int negamax(Search *s, const Board *b, int depth, int alpha, int beta, in
             continue;
         legal++;
 
+        int child_alpha = random_ties && alpha > -SCORE_INF ? alpha - 1 : alpha;
         s->hashes[s->hash_count++] = next.hash;
-        int score = -negamax(s, &next, depth - 1, -beta, -alpha, ply + 1);
+        int score = -negamax(s, &next, depth - 1, -beta, -child_alpha, ply + 1);
         s->hash_count--;
         if (s->stopped)
             return 0;
 
+        if (random_ties && score == best)
+            ties[tie_count++] = m;
+
         if (score > best) {
             best = score;
             best_move = m;
+            ties[0] = m;
+            tie_count = 1;
             if (score > alpha) {
                 alpha = score;
                 s->pv[ply][0] = m;
@@ -372,6 +377,20 @@ static int negamax(Search *s, const Board *b, int depth, int alpha, int beta, in
 
     if (!legal)
         return in_check ? -SCORE_MATE + ply : 0;
+
+    if (tie_count > 1) {
+        /*
+         * A fresh draw per depth: reusing one index would correlate with the
+         * previous pick, because that move is moved to the front as hash move.
+         */
+        uint64_t rng = s->limits->seed ^ (uint64_t)depth * 0x9E3779B97F4A7C15ULL;
+        Move pick = ties[rng_below(&rng, (uint64_t)tie_count)];
+        if (pick != best_move) {
+            best_move = pick;
+            s->pv[0][0] = pick; /* its continuation was not kept */
+            s->pv_len[0] = 1;
+        }
+    }
 
     int bound = best >= beta ? BOUND_LOWER : best > original_alpha ? BOUND_EXACT : BOUND_UPPER;
     tt_store(&s->tt, b->hash, best_move, score_to_tt(best, ply), depth, bound);

@@ -185,12 +185,15 @@ static void cmd_setoption(Uci *u, char *args) {
             printf("info string could not set Hash to %s\n", value);
     } else if (strcasecmp(name, "Weights") == 0) {
         char err[256];
-        if (len == 0 || strcmp(value, "<empty>") == 0)
+        if (len == 0 || strcmp(value, "<empty>") == 0) {
             weights_zero(&u->weights);
-        else if (weights_load(value, &u->weights, err, sizeof err))
+        } else if (weights_load(value, &u->weights, err, sizeof err)) {
             printf("info string loaded weights %s\n", value);
-        else
+        } else {
             printf("info string %s\n", err);
+            return;
+        }
+        search_clear(u->search); /* stored scores came from the old weights */
     } else {
         printf("info string unknown option %s\n", name);
     }

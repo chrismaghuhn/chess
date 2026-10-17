@@ -12,6 +12,12 @@
  * Units are whatever the tuner makes them; it maps scores to win
  * probability with a fixed scale, so they end up roughly comparable to
  * centipawns. EVAL_MAX keeps every evaluation clear of mate scores.
+ *
+ * The engine plays with weights rounded to integers (half to even) and
+ * clamped to WEIGHT_MAX, and clamps the sum to EVAL_MAX. A tuner that works
+ * with floats sees slightly different scores: at most 0.5 per active
+ * feature from rounding, and none from clamping as long as its weights stay
+ * within the limits. It should check that before writing a file.
  */
 #define EVAL_MAX 20000
 #define WEIGHT_MAX 10000

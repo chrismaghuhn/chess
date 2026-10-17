@@ -34,14 +34,19 @@ void data_pack(const Board *b, int result, int ply, uint8_t out[DATA_RECORD_SIZE
     put_le(out + 30, (uint64_t)ply, 2);
 }
 
-void data_set_result(uint8_t record[DATA_RECORD_SIZE], int white_result) {
+void data_set_outcome(uint8_t record[DATA_RECORD_SIZE], int white_result, GameEnd end) {
     record[28] = (uint8_t)(record[24] == WHITE ? white_result : RESULT_WIN - white_result);
+    record[29] = (uint8_t)end;
 }
 
 bool data_unpack(const uint8_t in[DATA_RECORD_SIZE], DataPosition *out) {
     Bitboard occupied = get_le(in, 8);
-    if (popcount(occupied) > 32 || in[28] > RESULT_WIN)
+    int pieces = popcount(occupied);
+    if (pieces > 32 || in[28] > RESULT_WIN || in[29] >= END_COUNT)
         return false;
+    for (int n = pieces; n < 32; n++)
+        if (in[8 + n / 2] >> (4 * (n & 1)) & 15)
+            return false; /* unused nibbles must be zero */
 
     uint8_t squares[64];
     memset(squares, NO_PIECE, sizeof squares);
@@ -57,6 +62,7 @@ bool data_unpack(const uint8_t in[DATA_RECORD_SIZE], DataPosition *out) {
     if (!board_setup(&out->board, squares, in[24], in[25], in[26], in[27], ply / 2 + 1))
         return false;
     out->result = in[28];
+    out->end = (GameEnd)in[29];
     out->ply = ply;
     return true;
 }
@@ -89,7 +95,8 @@ FILE *data_open(const char *path, uint64_t *count, char *err, size_t err_size) {
         fclose(f);
         return NULL;
     }
-    if (get_le(header + 4, 4) != DATA_VERSION || get_le(header + 8, 4) != DATA_RECORD_SIZE) {
+    if (get_le(header + 4, 4) != DATA_VERSION || get_le(header + 8, 4) != DATA_RECORD_SIZE
+        || get_le(header + 12, 4) != 0) {
         snprintf(err, err_size, "%s: unsupported version or record size", path);
         fclose(f);
         return NULL;
