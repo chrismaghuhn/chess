@@ -1,0 +1,233 @@
+#define _POSIX_C_SOURCE 200809L
+
+#include "uci.h"
+
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <time.h>
+
+#include "game.h"
+#include "movegen.h"
+#include "perft.h"
+#include "search.h"
+
+#define ENGINE_NAME "Schach Gen0"
+#define DEFAULT_HASH_MB 16
+#define MAX_HASH_MB 4096
+
+/*
+ * The search runs in its own thread so that "stop" and "isready" are
+ * answered while it thinks. Everything except the stop flag is only touched
+ * by the main thread while no search is running.
+ */
+typedef struct {
+    Game game;
+    Search *search;
+    SearchLimits limits;
+    atomic_bool stop;
+    bool infinite;
+    bool searching;
+    pthread_t thread;
+} Uci;
+
+static void *search_thread(void *arg) {
+    Uci *u = arg;
+    SearchResult result = search_run(u->search, &u->game, &u->limits, true);
+
+    /* After "go infinite" the GUI expects bestmove only once it sends "stop". */
+    while (u->infinite && !atomic_load(&u->stop)) {
+        struct timespec pause = { 0, 1000000 };
+        nanosleep(&pause, NULL);
+    }
+
+    char move[6] = "0000";
+    if (result.best)
+        move_to_uci(result.best, move);
+    printf("bestmove %s\n", move);
+    fflush(stdout);
+    return NULL;
+}
+
+static void stop_search(Uci *u) {
+    if (!u->searching)
+        return;
+    atomic_store(&u->stop, true);
+    pthread_join(u->thread, NULL);
+    u->searching = false;
+}
+
+static char *skip_spaces(char *s) {
+    return s + strspn(s, " \t");
+}
+
+static int next_int(char **save) {
+    char *token = strtok_r(NULL, " \t", save);
+    return token ? atoi(token) : 0;
+}
+
+static void cmd_position(Uci *u, char *args) {
+    char *moves = strstr(args, "moves");
+    if (moves) {
+        *moves = '\0';
+        moves += strlen("moves");
+    }
+
+    args = skip_spaces(args);
+    Board board;
+    bool ok;
+    if (strncmp(args, "startpos", 8) == 0)
+        ok = board_from_fen(&board, START_FEN);
+    else if (strncmp(args, "fen", 3) == 0)
+        ok = board_from_fen(&board, skip_spaces(args + 3));
+    else
+        ok = false;
+    if (!ok) {
+        printf("info string invalid position\n");
+        return;
+    }
+
+    Game game;
+    game_init(&game, &board);
+    if (moves) {
+        char *save;
+        for (char *token = strtok_r(moves, " \t", &save); token; token = strtok_r(NULL, " \t", &save)) {
+            Move m;
+            if (!game_find_move(&game.board, token, &m)) {
+                printf("info string illegal move %s, ignoring the rest\n", token);
+                break;
+            }
+            game_play(&game, m);
+        }
+    }
+    u->game = game;
+}
+
+static void cmd_go(Uci *u, char *args) {
+    search_limits_init(&u->limits);
+    u->infinite = false;
+
+    char *save;
+    for (char *token = strtok_r(args, " \t", &save); token; token = strtok_r(NULL, " \t", &save)) {
+        if (strcmp(token, "infinite") == 0) {
+            u->infinite = true;
+        } else if (strcmp(token, "depth") == 0) {
+            u->limits.depth = next_int(&save);
+        } else if (strcmp(token, "nodes") == 0) {
+            char *value = strtok_r(NULL, " \t", &save);
+            u->limits.nodes = value ? strtoull(value, NULL, 10) : 0;
+        } else if (strcmp(token, "movetime") == 0) {
+            u->limits.movetime = next_int(&save);
+        } else if (strcmp(token, "wtime") == 0) {
+            int t = next_int(&save);
+            u->limits.time[WHITE] = t > 0 ? t : 0;
+        } else if (strcmp(token, "btime") == 0) {
+            int t = next_int(&save);
+            u->limits.time[BLACK] = t > 0 ? t : 0;
+        } else if (strcmp(token, "winc") == 0) {
+            u->limits.inc[WHITE] = next_int(&save);
+        } else if (strcmp(token, "binc") == 0) {
+            u->limits.inc[BLACK] = next_int(&save);
+        } else if (strcmp(token, "movestogo") == 0) {
+            u->limits.movestogo = next_int(&save);
+        } else if (strcmp(token, "perft") == 0) {
+            int depth = next_int(&save);
+            if (depth > 0)
+                perft_divide(&u->game.board, depth, stdout);
+            return;
+        }
+    }
+
+    atomic_store(&u->stop, false);
+    u->limits.stop = &u->stop;
+    if (pthread_create(&u->thread, NULL, search_thread, u) != 0) {
+        printf("info string could not start search thread\n");
+        return;
+    }
+    u->searching = true;
+}
+
+static void cmd_setoption(Uci *u, char *args) {
+    char *name = strstr(args, "name");
+    char *value = strstr(args, "value");
+    if (!name || !value)
+        return;
+    *value = '\0';
+    name = skip_spaces(name + strlen("name"));
+    value = skip_spaces(value + strlen("value"));
+    name[strcspn(name, " \t")] = '\0';
+
+    if (strcasecmp(name, "Hash") == 0) {
+        int mb = atoi(value);
+        if (mb < 1 || mb > MAX_HASH_MB || !search_resize(u->search, (size_t)mb))
+            printf("info string could not set Hash to %s\n", value);
+    } else {
+        printf("info string unknown option %s\n", name);
+    }
+}
+
+void uci_loop(void) {
+    Uci *u = calloc(1, sizeof *u);
+    if (!u || !(u->search = search_new(DEFAULT_HASH_MB))) {
+        fprintf(stderr, "out of memory\n");
+        exit(1);
+    }
+    Board start;
+    board_from_fen(&start, START_FEN);
+    game_init(&u->game, &start);
+
+    char *line = NULL;
+    size_t capacity = 0;
+    bool quit = false;
+    while (!quit && getline(&line, &capacity, stdin) != -1) {
+        line[strcspn(line, "\r\n")] = '\0';
+        char *command = skip_spaces(line);
+        char *args = command + strcspn(command, " \t");
+        if (*args)
+            *args++ = '\0';
+
+        if (strcmp(command, "uci") == 0) {
+            printf("id name " ENGINE_NAME "\n");
+            printf("id author chrismaghuhn\n");
+            printf("option name Hash type spin default %d min 1 max %d\n", DEFAULT_HASH_MB, MAX_HASH_MB);
+            printf("uciok\n");
+        } else if (strcmp(command, "isready") == 0) {
+            printf("readyok\n");
+        } else if (strcmp(command, "ucinewgame") == 0) {
+            stop_search(u);
+            search_clear(u->search);
+            game_init(&u->game, &start);
+        } else if (strcmp(command, "position") == 0) {
+            stop_search(u);
+            cmd_position(u, args);
+        } else if (strcmp(command, "go") == 0) {
+            stop_search(u);
+            cmd_go(u, args);
+        } else if (strcmp(command, "stop") == 0) {
+            stop_search(u);
+        } else if (strcmp(command, "setoption") == 0) {
+            stop_search(u);
+            cmd_setoption(u, args);
+        } else if (strcmp(command, "d") == 0) {
+            board_print(&u->game.board, stdout);
+        } else if (strcmp(command, "quit") == 0) {
+            quit = true;
+        } else if (*command) {
+            printf("info string unknown command %s\n", command);
+        }
+        fflush(stdout);
+    }
+
+    /* At end of input (e.g. `echo "go depth 8" | engine`) let a finite search finish. */
+    if (!quit && u->searching && !u->infinite) {
+        pthread_join(u->thread, NULL);
+        u->searching = false;
+    }
+    stop_search(u);
+    search_free(u->search);
+    free(u);
+    free(line);
+}

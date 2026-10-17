@@ -21,7 +21,7 @@ static void add_promotions(MoveList *list, int from, int to, int capture) {
         add(list, from, to, MF_PROMO | capture | piece);
 }
 
-static void generate_pawn_moves(const Board *b, MoveList *list) {
+static void generate_pawn_moves(const Board *b, MoveList *list, bool noisy_only) {
     int us = b->side;
     Bitboard enemy = b->occupied[us ^ 1], empty = ~b->all;
     int push = us == WHITE ? 8 : -8;
@@ -33,7 +33,7 @@ static void generate_pawn_moves(const Board *b, MoveList *list) {
         int to = from + push;
         bool promotes = rank_of(from) == last_rank_before_promo;
 
-        if (empty & bit(to)) {
+        if ((empty & bit(to)) && (promotes || !noisy_only)) {
             if (promotes) {
                 add_promotions(list, from, to, 0);
             } else {
@@ -78,15 +78,15 @@ static void generate_castling(const Board *b, MoveList *list) {
         add(list, E1 + base, C1 + base, MF_QUEEN_CASTLE);
 }
 
-void movegen_generate(const Board *b, MoveList *list) {
+static void generate(const Board *b, MoveList *list, bool noisy_only) {
     int us = b->side;
     Bitboard enemy = b->occupied[us ^ 1];
-    Bitboard targets = ~b->occupied[us];
+    Bitboard targets = noisy_only ? enemy : ~b->occupied[us];
     const Bitboard *own = b->pieces[us];
 
     list->count = 0;
 
-    generate_pawn_moves(b, list);
+    generate_pawn_moves(b, list, noisy_only);
 
     for (Bitboard bb = own[KNIGHT]; bb;) {
         int from = pop_lsb(&bb);
@@ -104,7 +104,16 @@ void movegen_generate(const Board *b, MoveList *list) {
     int king = board_king_square(b, us);
     add_targets(list, king, king_attacks[king] & targets, enemy);
 
-    generate_castling(b, list);
+    if (!noisy_only)
+        generate_castling(b, list);
+}
+
+void movegen_generate(const Board *b, MoveList *list) {
+    generate(b, list, false);
+}
+
+void movegen_generate_noisy(const Board *b, MoveList *list) {
+    generate(b, list, true);
 }
 
 void move_to_uci(Move m, char out[6]) {

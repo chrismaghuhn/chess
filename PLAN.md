@@ -38,13 +38,16 @@ src/      gemeinsame Bibliothek (Engine und Tuner)
           movegen.[ch]   pseudo-legale Züge + Legalitätscheck
           perft.[ch]     Perft und Divide (auch für UCI `go perft` später)
           zobrist.[ch]   Hashing für TT und Stellungswiederholung
+          game.[ch]      Partie: Hash-Historie, Matt/Patt/Remis-Regeln, Züge per UCI-Name
+          tt.[ch]        Transposition Table
           features.[ch]  Stellung → Merkmalsindizes (EIN Code für Engine und Tuner)
-          eval.[ch]      lineare Bewertung, lädt Gewichtsdatei
+          eval.[ch]      lineare Bewertung, lädt Gewichtsdatei (Gen 0: immer 0)
           search.[ch]    Negamax/Alpha-Beta, Quiescence, TT, Zugsortierung
           datafmt.[ch]   gepacktes Stellungsformat für Trainingsdaten
-engine/   main.c, uci.c, selfplay.c         → Binary `engine`
+engine/   main.c, uci.c, selfplay.c         → Binary `engine` (UCI; `engine bench [tiefe]`)
 tuner/    main.c, texel.c                   → Binary `tuner`
-tests/    perft.c (Perft-Suite)             → `make test`
+tests/    perft.c (Perft-Suite), search.c (Matt-Orakel, Remis, legale Partien),
+          uci.sh (UCI-Smoke-Test)           → `make test`
 tools/    plot.py (Python, nur Auswertung)
 weights/  Gewichtsdateien pro Generation
 data/     Trainingsdaten (nicht in git)
@@ -57,10 +60,12 @@ log/      generations.csv
 - `make` baut mit `-O2 -march=native`
 - `make debug` baut mit `-O0 -g -fsanitize=address,undefined`; Debug-Builds prüfen
   zusätzlich an jedem Perft-Knoten, ob Bitboards, Mailbox und Hash zusammenpassen
-- `make test` führt die Perft-Suite aus (bis 25 Mio. Knoten, ~2 s);
-  `make test-full` alles (~1,5 Mrd. Knoten, ~40 s); `make test-debug` die kleine Suite mit Sanitizern
+- `make test` führt Perft-Suite (bis 25 Mio. Knoten), Suchtests und UCI-Test aus (~5 s);
+  `make test-full` mit voller Perft-Suite (~1,5 Mrd. Knoten, ~40 s); `make test-debug` alles mit Sanitizern
+- `make bench`: Suche bis Tiefe 7 auf 6 Stellungen. Die Knotenzahl ist ein Fingerabdruck:
+  Sie ändert sich genau dann, wenn sich das Suchverhalten ändert.
 - `build/release/perft divide <tiefe> <fen|startpos>` zum Eingrenzen von Perft-Fehlern
-- Ausgaben landen in `build/`
+- Ausgaben landen in `build/<mode>/`, Objektdateien in `build/<mode>/obj/`
 
 ## Design-Entscheidungen
 
@@ -71,7 +76,7 @@ log/      generations.csv
 
 ### Zuggenerierung
 - Pseudo-legale Züge erzeugen, nach dem Ausführen prüfen, ob der eigene König angegriffen ist
-- Zugliste als festes Array `Move moves[256]`, kein `malloc`
+- Zugliste als festes Array `Move moves[MAX_MOVES]`, kein `malloc`
 - Gleitende Figuren erst mit einfachen Strahl-Schleifen; Magic Bitboards erst, wenn Perft stimmt und Tempo zählt
 
 ### Bewertung (linear, ohne Vorwissen)
@@ -87,10 +92,15 @@ log/      generations.csv
 ### Suche
 - Negamax mit Alpha-Beta, Iterative Deepening
 - Quiescence Search (nur Schlagzüge und Umwandlungen)
-- Transposition Table
-- Zugsortierung: TT-Zug, MVV-LVA, Killer-Züge, History-Heuristik
+- Transposition Table (ein Eintrag pro Slot, immer ersetzen)
+- Schach-Erweiterung: im Schach wird eine Halbzug tiefer gesucht
+- Zugsortierung **ohne Vorwissen**: TT-Zug, dann Schlagzüge und Umwandlungen, dann Killer-Züge,
+  dann History-Heuristik. History und Killer lernt die Suche selbst. MVV-LVA (nach Figurenwert)
+  wäre Vorwissen; das kommt erst, wenn die Figurenwerte aus den gelernten Gewichten stammen.
 - Später: Null-Move-Pruning, Late Move Reductions, Aspiration Windows
-- Remis-Erkennung: Patt, dreifache Wiederholung, 50-Züge-Regel, ungenügendes Material
+- Remis-Erkennung: Patt, Wiederholung (in der Suche zählt schon die zweite), 50-Züge-Regel, ungenügendes Material
+- UCI: Suche im eigenen Thread; `go` mit depth, nodes, movetime, wtime/btime/winc/binc/movestogo, infinite, perft;
+  Option `Hash`; `d` zeigt das Brett. Züge von außen werden gegen die legalen Züge geprüft.
 
 ### Selbstpartien
 - Laufen direkt in der Engine (`engine selfplay ...`), mehrere Threads, ohne UCI-Overhead

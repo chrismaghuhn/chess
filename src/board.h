@@ -51,6 +51,9 @@ static inline bool board_in_check(const Board *b) {
     return board_square_attacked(b, board_king_square(b, b->side), b->side ^ 1);
 }
 
+/* No pawns, rooks or queens and at most one minor piece: nobody can mate. */
+bool board_insufficient_material(const Board *b);
+
 uint64_t board_compute_hash(const Board *b);
 
 /* Checks that bitboards, mailbox and hash agree. For debug builds and tests. */

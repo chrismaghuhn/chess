@@ -58,6 +58,13 @@ bool board_square_attacked(const Board *b, int sq, int by_color) {
         || (rook_attacks(sq, b->all) & (p[ROOK] | p[QUEEN]));
 }
 
+bool board_insufficient_material(const Board *b) {
+    const Bitboard *w = b->pieces[WHITE], *k = b->pieces[BLACK];
+    if (w[PAWN] | k[PAWN] | w[ROOK] | k[ROOK] | w[QUEEN] | k[QUEEN])
+        return false;
+    return popcount(w[KNIGHT] | k[KNIGHT] | w[BISHOP] | k[BISHOP]) <= 1;
+}
+
 uint64_t board_compute_hash(const Board *b) {
     uint64_t h = 0;
     for (int sq = 0; sq < 64; sq++)
