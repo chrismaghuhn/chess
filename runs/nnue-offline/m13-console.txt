@@ -1,0 +1,10 @@
+== s10 vs linear-all (native), 5000 nodes
+runs/run7-n1500/weights/gen12.bin vs runs/nnue-offline/linear-all.bin: +1103 =231 -666, score 60.9%, Elo +77 +/- 15
+== s10 vs linear-all (native), 0.1 s/move
+runs/run7-n1500/weights/gen12.bin vs runs/nnue-offline/linear-all.bin: +227 =133 -640, score 29.3%, Elo -153 +/- 22
+== bench
+10196665 nodes 7019792 nps
+summary hidden=32 train_games=104000 train_positions=11264945 start_val=0.132012 val=0.121189 start_test=0.132490 test=0.121253 best_epoch=30.0 smooth=30 quiet_change=1.7 cpu_s=5308.6 wall_s=572.6
+runs/run7-n1500/weights/gen12.bin vs runs/run7-n1500/weights/gen12.bin: +1079 =235 -686, score 59.8%, Elo +69 +/- 15
+summary hidden=32 train_games=104000 train_positions=11264945 start_val=0.132012 val=0.118404 start_test=0.132490 test=0.118352 best_epoch=57.0 smooth=10 quiet_change=5.8 cpu_s=10436.3 wall_s=1106.3
+runs/run7-n1500/weights/gen12.bin vs runs/run7-n1500/weights/gen12.bin: +1221 =177 -602, score 65.5%, Elo +111 +/- 15

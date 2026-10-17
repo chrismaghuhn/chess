@@ -5,7 +5,7 @@
  *
  *   nnue-train --out FILE --resolve WEIGHTS --data FILE [--data FILE ...]
  *              [--init-linear WEIGHTS] [--hidden H] [--epochs N] [--batch N] [--lr X]
- *              [--lr-linear X] [--wd X] [--train-games N] [--threads N] [--seed N]
+ *              [--lr-linear X] [--wd X] [--train-games N] [--threads N] [--seed N] [--smooth X]
  *
  * Positions are resolved to quiet leaves with the --resolve linear weights,
  * as in the linear tuner. Split by the game number inside each file: % 10 == 0
@@ -14,6 +14,15 @@
  * --train-games keeps only that many training games, evenly spread (for the
  * learning curve). --hidden 0 trains the linear part alone with the same
  * pipeline, as the baseline.
+ *
+ * --smooth X (milestone 13): game results label whole games, so they say
+ * nothing about how the value changes from one move to the next - yet that
+ * is all a search compares. Each position also gets one random quiet child
+ * (a legal move that neither captures nor promotes), and training adds
+ * X * ((r(position) + r(child)) * SIGMOID_SCALE / 4)^2, where r is the
+ * network part of the evaluation (without the linear part): a quiet move
+ * should hardly change what the network adds. X = 1 weighs that change like
+ * a prediction error of the same size at an even position.
  */
 #include <errno.h>
 #include <inttypes.h>
@@ -28,6 +37,7 @@
 #include "datafmt.h"
 #include "nnue.h"
 #include "rng.h"
+#include "movegen.h"
 #include "search.h"
 
 #define SIGMOID_SCALE 0.005756462732485115 /* ln(10) / 400, as in the linear tuner */
@@ -43,6 +53,8 @@ typedef struct {
     uint64_t *offset; /* inputs of position i: input[offset[i] .. offset[i+1]) */
     uint16_t *input;  /* side to move's perspective of the quiet leaf */
     float *target;    /* result for the leaf's side to move: 0, 0.5, 1 */
+    uint64_t *child_offset; /* inputs of a random quiet child of leaf i (none: empty), its side to move's view */
+    uint16_t *child_input;
     uint8_t *split;
     size_t in_split[3];
     size_t games[3];
@@ -70,16 +82,49 @@ typedef struct {
     const uint8_t (*records)[DATA_RECORD_SIZE];
     const Weights *weights;
     size_t begin, end;
-    uint16_t *input;
-    size_t length, capacity;
-    uint8_t *counts;
+    uint16_t *input, *child_input;
+    size_t length, capacity, child_length, child_capacity;
+    uint8_t *counts, *child_counts;
 } Job;
+
+static void append(uint16_t **buf, size_t *length, size_t *capacity, const uint16_t *in, int n) {
+    if (*length + (size_t)n > *capacity) {
+        *capacity = (*capacity + (size_t)n) * 2;
+        *buf = realloc(*buf, *capacity * sizeof **buf);
+        if (!*buf) {
+            fprintf(stderr, "out of memory\n");
+            exit(1);
+        }
+    }
+    memcpy(*buf + *length, in, (size_t)n * sizeof *in);
+    *length += (size_t)n;
+}
+
+/* Inputs of a random quiet child of b (deterministic per position index), 0 if it has none. */
+static int quiet_child(const Board *b, size_t index, uint16_t in[NNUE_MAX_ACTIVE]) {
+    MoveList list;
+    movegen_legal(b, &list);
+    Board children[MAX_MOVES];
+    int quiet = 0;
+    for (int k = 0; k < list.count; k++) {
+        Board c;
+        board_make_move(b, list.moves[k], &c);
+        if (popcount(c.all) == popcount(b->all) && popcount(c.pieces[b->side][PAWN]) == popcount(b->pieces[b->side][PAWN]))
+            children[quiet++] = c;
+    }
+    if (!quiet)
+        return 0;
+    uint64_t rng = (uint64_t)index * 0x9E3779B97F4A7C15ULL + 7;
+    return nnue_inputs(&children[rng_below(&rng, (uint64_t)quiet)], in);
+}
 
 static void *resolve_worker(void *arg) {
     Job *job = arg;
     Search *s = search_new(1);
     search_set_weights(s, job->weights);
     job->counts = xcalloc(job->end - job->begin, 1);
+    if (job->d->child_offset)
+        job->child_counts = xcalloc(job->end - job->begin, 1);
     for (size_t i = job->begin; i < job->end; i++) {
         DataPosition pos;
         if (!data_unpack(job->records[i], &pos)) {
@@ -90,17 +135,13 @@ static void *resolve_worker(void *arg) {
         search_quiet(s, &pos.board, QUIET_MAX_NODES, &leaf, NULL, NULL);
         uint16_t in[NNUE_MAX_ACTIVE];
         int n = nnue_inputs(&leaf, in);
-        if (job->length + (size_t)n > job->capacity) {
-            job->capacity = (job->capacity + (size_t)n) * 2;
-            job->input = realloc(job->input, job->capacity * sizeof *job->input);
-            if (!job->input) {
-                fprintf(stderr, "out of memory\n");
-                exit(1);
-            }
-        }
-        memcpy(job->input + job->length, in, (size_t)n * sizeof *in);
-        job->length += (size_t)n;
+        append(&job->input, &job->length, &job->capacity, in, n);
         job->counts[i - job->begin] = (uint8_t)n;
+        if (job->child_counts) {
+            n = quiet_child(&leaf, i, in);
+            append(&job->child_input, &job->child_length, &job->child_capacity, in, n);
+            job->child_counts[i - job->begin] = (uint8_t)n;
+        }
         float y = (float)pos.result / 2.0f;
         job->d->target[i] = leaf.side == pos.board.side ? y : 1.0f - y;
     }
@@ -108,7 +149,8 @@ static void *resolve_worker(void *arg) {
     return NULL;
 }
 
-static bool load(NetData *d, char **paths, int path_count, long train_games, const Weights *resolve, int threads) {
+static bool load(NetData *d, char **paths, int path_count, long train_games, const Weights *resolve, int threads,
+                 bool children) {
     memset(d, 0, sizeof *d);
     uint8_t (*records)[DATA_RECORD_SIZE] = NULL;
     uint8_t *split = NULL;
@@ -190,6 +232,8 @@ static bool load(NetData *d, char **paths, int path_count, long train_games, con
 
     d->target = xcalloc(d->count, sizeof *d->target);
     d->split = split;
+    if (children)
+        d->child_offset = xcalloc(d->count + 1, sizeof *d->child_offset);
     Job *jobs = xcalloc((size_t)threads, sizeof *jobs);
     pthread_t *ids = xcalloc((size_t)threads, sizeof *ids);
     for (int t = 0; t < threads; t++) {
@@ -198,10 +242,25 @@ static bool load(NetData *d, char **paths, int path_count, long train_games, con
                          .end = d->count * (size_t)(t + 1) / (size_t)threads };
         pthread_create(&ids[t], NULL, resolve_worker, &jobs[t]);
     }
-    size_t total = 0;
+    size_t total = 0, child_total = 0;
     for (int t = 0; t < threads; t++) {
         pthread_join(ids[t], NULL);
         total += jobs[t].length;
+        child_total += jobs[t].child_length;
+    }
+    if (children) {
+        d->child_input = xcalloc(child_total, sizeof *d->child_input);
+        size_t at = 0;
+        for (int t = 0; t < threads; t++) {
+            memcpy(d->child_input + at, jobs[t].child_input, jobs[t].child_length * sizeof *d->child_input);
+            for (size_t i = jobs[t].begin; i < jobs[t].end; i++) {
+                d->child_offset[i] = at;
+                at += jobs[t].child_counts[i - jobs[t].begin];
+            }
+            free(jobs[t].child_input);
+            free(jobs[t].child_counts);
+        }
+        d->child_offset[d->count] = at;
     }
     d->offset = xcalloc(d->count + 1, sizeof *d->offset);
     d->input = xcalloc(total, sizeof *d->input);
@@ -259,9 +318,29 @@ typedef struct {
     size_t count;
     Network grads[CHUNKS];
     double loss[CHUNKS];
+    double change[CHUNKS]; /* sum of |r(position) + r(child)| over positions with a child */
+    size_t changed[CHUNKS];
     bool backward;
+    double smooth;
+    double mean_change; /* of the last pass, in evaluation units */
     int threads;
 } Pass;
+
+/* The network part of an evaluation: everything but the linear skip part. */
+static double network_part(const Network *net, const uint16_t *in, int n, NnueCache *cache) {
+    double linear = 0;
+    for (int k = 0; k < n; k++)
+        linear += net->skip[in[k]];
+    return nnue_forward(net, in, n, cache) - linear;
+}
+
+/* Gradient of the network part only: nnue_backward minus its skip contribution. */
+static void network_backward(const Network *net, const uint16_t *in, int n, const NnueCache *cache, float g,
+                             Network *grad) {
+    nnue_backward(net, in, n, cache, g, grad);
+    for (int k = 0; k < n; k++)
+        grad->skip[in[k]] -= g;
+}
 
 typedef struct {
     Pass *pass;
@@ -275,7 +354,8 @@ static void *pass_worker(void *arg) {
     for (int c = job->id; c < CHUNKS; c += ps->threads) {
         if (ps->backward)
             net_zero(&ps->grads[c]);
-        double loss = 0;
+        double loss = 0, change = 0;
+        size_t changed = 0;
         size_t begin = ps->count * (size_t)c / CHUNKS, end = ps->count * (size_t)(c + 1) / CHUNKS;
         for (size_t j = begin; j < end; j++) {
             size_t i = ps->positions[j];
@@ -289,8 +369,25 @@ static void *pass_worker(void *arg) {
             if (ps->backward)
                 nnue_backward(ps->net, in, n, &cache, (float)(2.0 * error * p * (1.0 - p) * SIGMOID_SCALE),
                               &ps->grads[c]);
+
+            int cn = d->child_offset ? (int)(d->child_offset[i + 1] - d->child_offset[i]) : 0;
+            if (cn && ps->net->hidden) {
+                const uint16_t *cin = d->child_input + d->child_offset[i];
+                NnueCache child_cache;
+                double rho = network_part(ps->net, in, n, &cache) + network_part(ps->net, cin, cn, &child_cache);
+                change += fabs(rho);
+                changed++;
+                if (ps->backward && ps->smooth > 0) {
+                    const double unit = SIGMOID_SCALE / 4;
+                    float g = (float)(2.0 * ps->smooth * rho * unit * unit);
+                    network_backward(ps->net, in, n, &cache, g, &ps->grads[c]);
+                    network_backward(ps->net, cin, cn, &child_cache, g, &ps->grads[c]);
+                }
+            }
         }
         ps->loss[c] = loss;
+        ps->change[c] = change;
+        ps->changed[c] = changed;
     }
     return NULL;
 }
@@ -310,8 +407,14 @@ static double run_pass(Pass *ps, const size_t *positions, size_t count, bool bac
         pthread_join(ids[t], NULL);
 
     double loss = 0;
-    for (int c = 0; c < CHUNKS; c++)
+    ps->mean_change = 0;
+    size_t changed = 0;
+    for (int c = 0; c < CHUNKS; c++) {
         loss += ps->loss[c];
+        ps->mean_change += ps->change[c];
+        changed += ps->changed[c];
+    }
+    ps->mean_change = changed ? ps->mean_change / (double)changed : 0;
     if (backward) {
         net_zero(grad);
         Params g = params_of(grad);
@@ -376,7 +479,7 @@ int main(int argc, char **argv) {
     int path_count = 0;
     const char *out = NULL, *resolve_path = NULL, *init_path = NULL;
     long hidden = 32, epochs = 30, batch = 16384, train_games = 0, threads = 1, seed = 1;
-    double lr = 1e-3, lr_linear = 0.05, wd = 0.01;
+    double lr = 1e-3, lr_linear = 0.05, wd = 0.01, smooth = 0;
 
     for (int i = 1; i < argc; i += 2) {
         const char *key = argv[i], *value = i + 1 < argc ? argv[i + 1] : NULL;
@@ -409,6 +512,8 @@ int main(int argc, char **argv) {
             ok = parse_double(value, &lr_linear);
         else if (strcmp(key, "--wd") == 0)
             ok = parse_double(value, &wd);
+        else if (strcmp(key, "--smooth") == 0)
+            ok = parse_double(value, &smooth);
         else
             ok = false;
         if (!ok) {
@@ -432,7 +537,7 @@ int main(int argc, char **argv) {
     }
 
     NetData d;
-    if (!load(&d, paths, path_count, train_games, &resolve, (int)threads))
+    if (!load(&d, paths, path_count, train_games, &resolve, (int)threads, hidden > 0))
         return 1;
     fprintf(stderr, "games train/val/test %zu/%zu/%zu, positions %zu/%zu/%zu\n", d.games[TRAIN],
             d.games[VALIDATION], d.games[TEST], d.in_split[TRAIN], d.in_split[VALIDATION], d.in_split[TEST]);
@@ -467,6 +572,7 @@ int main(int argc, char **argv) {
     pass->d = &d;
     pass->net = &net;
     pass->threads = (int)threads;
+    pass->smooth = smooth;
     for (int c = 0; c < CHUNKS; c++)
         nnue_alloc(&pass->grads[c], (int)hidden);
 
@@ -522,8 +628,8 @@ int main(int argc, char **argv) {
                     best_epoch = at;
                     net_copy(&best, &net);
                 }
-                fprintf(stderr, "epoch %5.1f  validation %.6f  stuck units %.0f%%%s\n", at, val,
-                        100 * stuck_units(&net, &d, sets[VALIDATION], sample), better ? "  *" : "");
+                fprintf(stderr, "epoch %5.1f  validation %.6f  quiet-move change %.1f  stuck units %.0f%%%s\n", at, val,
+                        pass->mean_change, 100 * stuck_units(&net, &d, sets[VALIDATION], sample), better ? "  *" : "");
             }
         }
         fprintf(stderr, "epoch %ld  train %.6f\n", epoch + 1, train_loss / (double)train_n);
@@ -531,13 +637,15 @@ int main(int argc, char **argv) {
 
     pass->net = &best;
     double test = run_pass(pass, sets[TEST], d.in_split[TEST], false, NULL);
+    double test_change = pass->mean_change;
     if (!nnue_save(&best, out)) {
         fprintf(stderr, "cannot write %s\n", out);
         return 1;
     }
     double cpu = clock_seconds(CLOCK_PROCESS_CPUTIME_ID) - cpu0, wall = clock_seconds(CLOCK_MONOTONIC) - wall0;
     printf("summary hidden=%ld train_games=%zu train_positions=%zu start_val=%.6f val=%.6f start_test=%.6f test=%.6f"
-           " best_epoch=%.1f cpu_s=%.1f wall_s=%.1f\n",
-           hidden, d.games[TRAIN], train_n, start_val, best_val, start_test, test, best_epoch, cpu, wall);
+           " best_epoch=%.1f smooth=%g quiet_change=%.1f cpu_s=%.1f wall_s=%.1f\n",
+           hidden, d.games[TRAIN], train_n, start_val, best_val, start_test, test, best_epoch, smooth, test_change, cpu,
+           wall);
     return 0;
 }

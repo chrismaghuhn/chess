@@ -198,6 +198,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 10 | Daten v2: Suchbewertung als Label, kalibrierte Aufgabe | kein Gewinn (λ schadet, Aufgabe ~0); Entdeckung: Tuning ist >50 % der CPU |
 | 11 | Schnelleres Tuning | −37 % CPU bei gleicher Stärke (Geduld + Leaf-Cache) |
 | 12 | Langer Lauf (36 Generationen) | lineare Bewertung sättigt bei ~+100 gegen den Anker |
+| 13 | NNUE mit Glättung über ruhige Züge | Netz schlägt das beste lineare Modell bei gleichen Knoten (+77); noch 5,6× zu langsam |
 
 ### Meilenstein 5: Tempo
 
@@ -505,6 +506,44 @@ Lauf 13 (`TUNER_FAST=on`, sonst Standard) von 12 auf 36 Generationen verlängert
 - Messhinweis: Die CPU-Sekunden schwanken mit Takt und Temperatur. Gen 13 (nach einer Pause) brauchte für gleich
   viele Knoten 65 s, Gen 12 und Gen 20–36 ~105–115 s. Die Knotenzahl wäre das stabilere Kostenmaß; CPU-Vergleiche
   zwischen Läufen haben deshalb ±10–20 % Unschärfe.
+
+### Meilenstein 13: warum das Netz verlor – und die Glättung über ruhige Züge
+
+Daten und Einstellungen wie in M9 (14,1 Mio. Stellungen, H = 32, 30 Epochen, Start Lauf 7 Gen 12).
+
+**Diagnose** (Werkzeuge im Scratch, Zahlen auf 20.000 Stellungen aus Lauf 13 Gen 30):
+- Die M9-Vermutung „Verteilungsverschiebung“ stimmt nicht: Der Netz-Anteil r (Bewertung minus linearer Teil) ist in
+  Stellungen nach 1–4 zufälligen Zügen genauso groß wie in Partiestellungen (Mittel ~84 cp, p90 ~195 cp).
+- Die eigentliche Ursache: Über die ruhigen Züge einer Stellung schwankt r um **26 cp** – mehr als der lineare Teil
+  (20 cp) und eher gegenläufig (Korrelation −0,3). Der Lieblingszug des Netzes gibt im Mittel 22 cp lineare Bewertung
+  ab. Alpha-Beta wählt genau die Züge, die das Netz zufällig überschätzt.
+- Grund: Partieergebnisse sind ein Label pro Partie. Sie sagen, *welche Stellungen* gewonnen werden (das lernt das Netz
+  gut: Test-Loss 0,1187 statt 0,1261), aber nichts darüber, wie sich der Wert von Zug zu Zug ändert – und nur das
+  vergleicht eine Suche.
+
+**Gegenmittel** (`nnue-train --smooth X`): Jede Trainingsstellung bekommt ein zufälliges ruhiges Kind (legaler Zug
+ohne Schlagen oder Umwandlung); zusätzlich bestraft wird X · ((r(Stellung) + r(Kind)) · ln10/1600)². Ein ruhiger Zug
+soll am Netz-Anteil kaum etwas ändern; der lineare Teil bleibt frei. Kein Vorwissen: nur eine Glattheitsannahme
+über die Struktur, die Werte lernt das Netz.
+
+| Netz (H = 32) | Test-Loss | r-Änderung über einen ruhigen Zug | Elo vs. linear (H = 0, Netz-Pfad), 5000 Knoten |
+|---|---|---|---|
+| ohne (M9) | 0,1187 | (Streuung 26 cp) | −62 ± 15 |
+| `--smooth 1` | 0,1182 | 14 cp | +39 ± 14 |
+| `--smooth 10` | 0,1188 | 4,5 cp | +91 ± 15 |
+| `--smooth 30` | 0,1213 | 1,7 cp | +69 ± 15 |
+| **`--smooth 10`, 60 Epochen** | 0,1184 | 5,8 cp | **+111 ± 15** |
+
+- Gegen das **stärkste lineare Modell** (`linear-all`, native Bewertung, der Lichess-Bot): `--smooth 10` (30 Epochen)
+  **+77 ± 15** bei 5000 Knoten – zum ersten Mal schlägt ein Netz die lineare Bewertung.
+- **Aber bei gleicher Zeit** (0,1 s/Zug): **−153 ± 22**. Das Netz rechnet in Float an jedem Blatt von Grund auf:
+  1,14 Mio. statt 6,35 Mio. Knoten/s (5,6× langsamer, nach der M9-Regel ~370 Elo Tempoverlust).
+- Go/Stop nach der M9-Regel: **Qualität ja, Tempo nein.** Die Gewinnschwelle liegt bei ~1,4–1,6× Verlangsamung
+  (2^(77…97 / 150)). Nötig ist eine schnelle Netz-Bewertung: Akkumulator inkrementell im Copy-Make, int16 statt
+  Float. Bei H = 32 sind das pro Zug wenige Dutzend Additionen pro geänderter Figur statt ~2000 – realistisch
+  erreichbar.
+- Nebenbei: Die Glättung ist auch ein Kandidat für den linearen Teil und für reichere Merkmale (M6 scheiterte
+  vielleicht am selben Rauschen).
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 

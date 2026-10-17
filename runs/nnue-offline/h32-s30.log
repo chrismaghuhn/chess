@@ -1,0 +1,92 @@
+games train/val/test 104000/13000/13000, positions 11264945/1419903/1413510
+start: validation 0.132012 test 0.132490
+epoch   0.5  validation 0.125926  quiet-move change 0.7  stuck units 0%  *
+epoch   1.0  validation 0.125693  quiet-move change 0.6  stuck units 0%  *
+epoch 1  train 0.125540
+epoch   1.5  validation 0.125574  quiet-move change 0.5  stuck units 0%  *
+epoch   2.0  validation 0.125506  quiet-move change 0.5  stuck units 0%  *
+epoch 2  train 0.125002
+epoch   2.5  validation 0.125492  quiet-move change 0.5  stuck units 0%  *
+epoch   3.0  validation 0.125458  quiet-move change 0.6  stuck units 0%  *
+epoch 3  train 0.124891
+epoch   3.5  validation 0.125446  quiet-move change 0.5  stuck units 0%  *
+epoch   4.0  validation 0.125445  quiet-move change 0.6  stuck units 0%  *
+epoch 4  train 0.124855
+epoch   4.5  validation 0.125453  quiet-move change 0.5  stuck units 0%
+epoch   5.0  validation 0.125433  quiet-move change 0.6  stuck units 0%  *
+epoch 5  train 0.124842
+epoch   5.5  validation 0.125420  quiet-move change 1.3  stuck units 0%  *
+epoch   6.0  validation 0.125441  quiet-move change 2.4  stuck units 0%
+epoch 6  train 0.124836
+epoch   6.5  validation 0.125444  quiet-move change 0.7  stuck units 0%
+epoch   7.0  validation 0.125436  quiet-move change 0.9  stuck units 0%
+epoch 7  train 0.124826
+epoch   7.5  validation 0.125373  quiet-move change 0.7  stuck units 0%  *
+epoch   8.0  validation 0.125341  quiet-move change 1.8  stuck units 0%  *
+epoch 8  train 0.124758
+epoch   8.5  validation 0.125275  quiet-move change 0.8  stuck units 0%  *
+epoch   9.0  validation 0.125213  quiet-move change 0.9  stuck units 0%  *
+epoch 9  train 0.124588
+epoch   9.5  validation 0.125146  quiet-move change 1.8  stuck units 0%  *
+epoch  10.0  validation 0.125095  quiet-move change 3.9  stuck units 0%  *
+epoch 10  train 0.124392
+epoch  10.5  validation 0.125028  quiet-move change 1.3  stuck units 0%  *
+epoch  11.0  validation 0.124958  quiet-move change 0.9  stuck units 0%  *
+epoch 11  train 0.124189
+epoch  11.5  validation 0.124860  quiet-move change 1.1  stuck units 0%  *
+epoch  12.0  validation 0.124768  quiet-move change 1.0  stuck units 0%  *
+epoch 12  train 0.123978
+epoch  12.5  validation 0.124663  quiet-move change 1.9  stuck units 0%  *
+epoch  13.0  validation 0.124561  quiet-move change 2.9  stuck units 0%  *
+epoch 13  train 0.123740
+epoch  13.5  validation 0.124432  quiet-move change 1.2  stuck units 0%  *
+epoch  14.0  validation 0.124273  quiet-move change 1.7  stuck units 0%  *
+epoch 14  train 0.123453
+epoch  14.5  validation 0.124126  quiet-move change 1.4  stuck units 0%  *
+epoch  15.0  validation 0.123941  quiet-move change 1.4  stuck units 0%  *
+epoch 15  train 0.123117
+epoch  15.5  validation 0.123722  quiet-move change 1.4  stuck units 0%  *
+epoch  16.0  validation 0.123476  quiet-move change 1.2  stuck units 0%  *
+epoch 16  train 0.122713
+epoch  16.5  validation 0.123251  quiet-move change 1.4  stuck units 0%  *
+epoch  17.0  validation 0.122994  quiet-move change 2.1  stuck units 0%  *
+epoch 17  train 0.122217
+epoch  17.5  validation 0.122720  quiet-move change 1.5  stuck units 0%  *
+epoch  18.0  validation 0.122484  quiet-move change 1.5  stuck units 0%  *
+epoch 18  train 0.121671
+epoch  18.5  validation 0.122280  quiet-move change 1.7  stuck units 0%  *
+epoch  19.0  validation 0.122112  quiet-move change 1.7  stuck units 0%  *
+epoch 19  train 0.121219
+epoch  19.5  validation 0.122004  quiet-move change 2.3  stuck units 0%  *
+epoch  20.0  validation 0.121876  quiet-move change 1.6  stuck units 0%  *
+epoch 20  train 0.120901
+epoch  20.5  validation 0.121814  quiet-move change 1.5  stuck units 0%  *
+epoch  21.0  validation 0.121761  quiet-move change 1.5  stuck units 0%  *
+epoch 21  train 0.120713
+epoch  21.5  validation 0.121723  quiet-move change 1.5  stuck units 0%  *
+epoch  22.0  validation 0.121674  quiet-move change 1.5  stuck units 0%  *
+epoch 22  train 0.120624
+epoch  22.5  validation 0.121625  quiet-move change 1.6  stuck units 0%  *
+epoch  23.0  validation 0.121582  quiet-move change 1.6  stuck units 0%  *
+epoch 23  train 0.120523
+epoch  23.5  validation 0.121530  quiet-move change 1.6  stuck units 0%  *
+epoch  24.0  validation 0.121473  quiet-move change 1.7  stuck units 0%  *
+epoch 24  train 0.120415
+epoch  24.5  validation 0.121433  quiet-move change 1.6  stuck units 0%  *
+epoch  25.0  validation 0.121382  quiet-move change 1.7  stuck units 0%  *
+epoch 25  train 0.120309
+epoch  25.5  validation 0.121364  quiet-move change 1.6  stuck units 0%  *
+epoch  26.0  validation 0.121331  quiet-move change 1.6  stuck units 0%  *
+epoch 26  train 0.120236
+epoch  26.5  validation 0.121324  quiet-move change 1.6  stuck units 0%  *
+epoch  27.0  validation 0.121303  quiet-move change 1.6  stuck units 0%  *
+epoch 27  train 0.120198
+epoch  27.5  validation 0.121283  quiet-move change 1.6  stuck units 0%  *
+epoch  28.0  validation 0.121267  quiet-move change 1.6  stuck units 0%  *
+epoch 28  train 0.120158
+epoch  28.5  validation 0.121240  quiet-move change 1.6  stuck units 0%  *
+epoch  29.0  validation 0.121225  quiet-move change 1.6  stuck units 0%  *
+epoch 29  train 0.120114
+epoch  29.5  validation 0.121204  quiet-move change 1.7  stuck units 0%  *
+epoch  30.0  validation 0.121189  quiet-move change 1.7  stuck units 0%  *
+epoch 30  train 0.120072
