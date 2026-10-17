@@ -191,7 +191,8 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 3 | Lineare Bewertung, Gewichtsdatei, Selbstpartien, Datenformat | `engine selfplay` erzeugt Daten und misst die CPU-Zeit |
 | 4 | Tuner + Generationsschleife + Match-Messung | erste Kurve mit ≥ 5 Generationen; Gen N schlägt Gen 0 messbar |
 | 5 | Tempo (siehe unten) | Lauf 2 mit der schnellen Engine erreicht dieselbe Stärke wie Lauf 1 mit deutlich weniger CPU-Zeit |
-| 6 | Verbesserungen | weitere Merkmale, später kleines NNUE aus eigenen Daten |
+| 6 | Reichere Bewertung (Experiment) | verworfen, siehe unten: kostet mehr Tempo, als es Elo bringt |
+| 7 | Knotenzahl pro Zug | welche Knotenzahl ergibt die meiste Stärke pro CPU-Sekunde Training |
 
 ### Meilenstein 5: Tempo
 
@@ -271,6 +272,36 @@ Angriffe gleitender Figuren ~13 %, Legalitätsprüfung + Zug ausführen ~12 %, Z
     (`runs/speed-comparison.svg`). **Meilenstein 5 erreicht.**
   - Nächste Hebel: mehr Ausdruckskraft der Bewertung (Merkmale), und die Frage nach der besten Knotenzahl
     pro Zug (doppelte Knoten ≈ +150 Elo Spielstärke, aber halb so viele Partien pro CPU-Sekunde).
+
+### Meilenstein 6: reichere Bewertung (Experiment, verworfen)
+
+Code auf dem Branch `m6-features` (nicht in `main`). Idee: mehr Ausdruckskraft, weil die Kurve ab Gen ~3 flach
+wird und die Validierungs-Loss auskonvergiert ist. Merkmale (Struktur vorgegeben, Werte gelernt, 918 statt 384
+Gewichte): Spielphase (jedes Merkmal für Mittel- und Endspiel, gemischt nach Zahl der Figuren ohne Bauern/Könige),
+Mobilität (Tabelle pro Figurentyp und Feldanzahl), Freibauer je Reihe, Doppel-/isolierter Bauer, Läuferpaar.
+Alte Gewichtsdateien laden in beide Phasen und ergeben bitgenau das alte Verhalten (gepinnter Test).
+
+| Messung | Ergebnis |
+|---|---|
+| Lauf 5 (neue Bewertung, sonst wie Lauf 4), Gen 8 gegen Lauf 4 Gen 8, gleiche Knoten | **−128 ± 16 Elo**, bei 5607 statt 3802 CPU-s |
+| Ablation auf Gen-0-Daten (Validierungs-Loss, kleiner = besser) | alt 0,1359 · +Phase 0,1385 · +Mobilität 0,1363 · +Bauern 0,1364 · alles 0,1385 |
+| Ablation auf allen Daten von Lauf 4 (Start: Lauf 4 Gen 8) | alt 0,1227 · +Phase 0,1217 · +Mobilität 0,1220 · +Bauern 0,1223 · alles 0,1214 |
+| Alle Merkmale (auf Lauf-4-Daten trainiert) gegen Lauf 4 Gen 8 | +13 ± 14 Elo bei gleichen Knoten, **−68 ± 15** bei gleicher CPU (30 % weniger Knoten) |
+| Nur Spielphase / nur Bauernstruktur+Läuferpaar gegen Lauf 4 Gen 8 | −7 ± 14 / +18 ± 14 |
+| Tempo des neuen Codes mit alten Gewichten (Merkmale ungenutzt) | 6–11 % langsamer; mit Merkmalen ~40 % langsamer pro Knoten |
+
+Erkenntnisse:
+- **Überanpassung durch zu wenige echte Stichproben:** Das Label gehört zur Partie, nicht zur Stellung – 2000
+  Partien sind für 918 Gewichte zu wenig. Mit den Zufallspartien der ersten Generationen lernt das reiche Modell
+  Rauschen, spielt schlechter und erzeugt schlechtere Daten (Abwärtsspirale in Lauf 5). Allgemeines L2 hilft
+  nicht; ein Strafterm nur auf die zusätzlichen Freiheiten (Mittel- minus Endspielgewicht, Strukturgewichte)
+  hält Gen 0 auf altem Niveau, kostet aber den Gewinn auf guten Daten.
+- **Bessere Loss ist nicht gleich mehr Elo:** Selbst auf guten Daten bringt die geringere Validierungs-Loss
+  kaum Spielstärke (+13 Elo). Bei dieser Spielstärke entscheidet Taktik, also die Knotenzahl (~+150 Elo pro
+  Verdopplung), nicht positionelle Feinheiten – und die teurere Bewertung kostet genau Knoten.
+- Mögliche spätere Wege, falls die Frage wiederkommt: einfaches Modell für die ersten Generationen und reiche
+  Merkmale erst ab guten Daten (Curriculum); Bauernstruktur per Pawn-Hash billig machen; mehr Partien pro
+  Generation. Die Werkzeuge dafür (Phasen-Merkmale, Ablations-Ergebnisse) liegen auf dem Branch.
 
 ## Ergebnisse
 
