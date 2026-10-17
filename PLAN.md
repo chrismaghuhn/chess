@@ -197,6 +197,9 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 9 | NNUE (Experiment) | gestoppt: bessere Loss, aber schwächeres Spiel; Nebenbefund: lineares Modell auf allen Daten +97 Elo |
 | 10 | Daten v2: Suchbewertung als Label, kalibrierte Aufgabe | kein Gewinn (λ schadet, Aufgabe ~0); Entdeckung: Tuning ist >50 % der CPU |
 | 11 | Schnelleres Tuning | −37 % CPU bei gleicher Stärke (Geduld + Leaf-Cache) |
+| 12 | Langer Lauf (36 Generationen) | lineare Bewertung sättigt bei ~+100 gegen den Anker |
+| 13 | NNUE mit Glättung über ruhige Züge | Netz schlägt das beste lineare Modell bei gleichen Knoten (+77); noch 5,6× zu langsam |
+| 14 | Schnelle Netz-Bewertung (int16, inkrementell) | 1,3× statt 5,6× langsamer; **+74 Elo bei gleicher Zeit** gegen das beste lineare Modell |
 
 ### Meilenstein 5: Tempo
 
@@ -482,6 +485,95 @@ Stellungen neu zu ruhigen Stellungen auf und trainierte fest 400 Epochen.
   in Lauf 12) – das wirkt wie ein eingebautes Gate.
 - Der Leaf-Cache (`FILE.leaves`, Version 2) trägt eine Prüfsumme und das Knotenlimit der Auflösung; beschädigte oder
   veraltete Caches werden neu berechnet.
+
+### Meilenstein 12: langer Lauf – wo sättigt die lineare Bewertung?
+
+Lauf 13 (`TUNER_FAST=on`, sonst Standard) von 12 auf 36 Generationen verlängert, ~20 min auf 16 Threads.
+
+| Gen | Training-CPU | Anker-Elo | Zuwachs je 8 Gen. |
+|---|---|---|---|
+| 12 | 1811 s | −22 ± 21 | |
+| 20 | 2706 s | +56 ± 21 | +78 |
+| 28 | 3845 s | +96 ± 21 | +40 |
+| 36 | 5015 s | +100 ± 21 | ~0 |
+
+- Die Kurve ist ab Gen 28 flach (Gen 28–36 zwischen +85 und +101). Das passt zu `linear-all` aus M9 (alle Daten
+  offline, ~+90 gegen den Anker): **die 384 PSQ-Gewichte sind ausgereizt**, nicht die Daten. Auch das Tuning findet
+  kaum noch etwas (beste Epoche meist 3–23).
+- Figurenwerte Gen 36: N 1.90, B 2.16, R 3.49, Q 6.90 (Bauer = 1) – Läufer > Springer, Dame hoch.
+- Der nächste Hebel ist also Kapazität der Bewertung (reichere Merkmale oder NNUE), jetzt mit 7,6 Mio. Stellungen
+  statt der ~2 Mio., an denen M6/M9 überangepasst haben – nicht mehr CPU für den linearen Lauf (also kein AWS-Lauf
+  dafür).
+- Messhinweis: Die CPU-Sekunden schwanken mit Takt und Temperatur. Gen 13 (nach einer Pause) brauchte für gleich
+  viele Knoten 65 s, Gen 12 und Gen 20–36 ~105–115 s. Die Knotenzahl wäre das stabilere Kostenmaß; CPU-Vergleiche
+  zwischen Läufen haben deshalb ±10–20 % Unschärfe.
+
+### Meilenstein 13: warum das Netz verlor – und die Glättung über ruhige Züge
+
+Daten und Einstellungen wie in M9 (14,1 Mio. Stellungen, H = 32, 30 Epochen, Start Lauf 7 Gen 12).
+
+**Diagnose** (Werkzeuge im Scratch, Zahlen auf 20.000 Stellungen aus Lauf 13 Gen 30):
+- Die M9-Vermutung „Verteilungsverschiebung“ stimmt nicht: Der Netz-Anteil r (Bewertung minus linearer Teil) ist in
+  Stellungen nach 1–4 zufälligen Zügen genauso groß wie in Partiestellungen (Mittel ~84 cp, p90 ~195 cp).
+- Die eigentliche Ursache: Über die ruhigen Züge einer Stellung schwankt r um **26 cp** – mehr als der lineare Teil
+  (20 cp) und eher gegenläufig (Korrelation −0,3). Der Lieblingszug des Netzes gibt im Mittel 22 cp lineare Bewertung
+  ab. Alpha-Beta wählt genau die Züge, die das Netz zufällig überschätzt.
+- Grund: Partieergebnisse sind ein Label pro Partie. Sie sagen, *welche Stellungen* gewonnen werden (das lernt das Netz
+  gut: Test-Loss 0,1187 statt 0,1261), aber nichts darüber, wie sich der Wert von Zug zu Zug ändert – und nur das
+  vergleicht eine Suche.
+
+**Gegenmittel** (`nnue-train --smooth X`): Jede Trainingsstellung bekommt ein zufälliges ruhiges Kind (legaler Zug
+ohne Schlagen oder Umwandlung); zusätzlich bestraft wird X · ((r(Stellung) + r(Kind)) · ln10/1600)². Ein ruhiger Zug
+soll am Netz-Anteil kaum etwas ändern; der lineare Teil bleibt frei. Kein Vorwissen: nur eine Glattheitsannahme
+über die Struktur, die Werte lernt das Netz.
+
+| Netz (H = 32) | Test-Loss | mittlere \|r + r'\| über einen ruhigen Zug | Elo vs. linear (H = 0, Netz-Pfad), 5000 Knoten |
+|---|---|---|---|
+| ohne (M9) | 0,1187 | – (Streuung über Geschwister 26 cp, anderes Maß) | −62 ± 15 |
+| `--smooth 1` | 0,1182 | 14 cp | +39 ± 14 |
+| `--smooth 10` | 0,1188 | 4,5 cp | +91 ± 15 |
+| `--smooth 30` | 0,1213 | 1,7 cp | +69 ± 15 |
+| **`--smooth 10`, 60 Epochen** | 0,1184 | 5,8 cp | **+111 ± 15** |
+
+- Gegen das **stärkste lineare Modell** (`linear-all`, native Bewertung, der Lichess-Bot): `--smooth 10` (30 Epochen)
+  **+77 ± 15** bei 5000 Knoten – zum ersten Mal schlägt ein Netz die lineare Bewertung.
+- **Aber bei gleicher Zeit** (0,1 s/Zug): **−153 ± 22**. Das Netz rechnet in Float an jedem Blatt von Grund auf:
+  1,14 Mio. statt 6,35 Mio. Knoten/s (5,6× langsamer, nach der M9-Regel ~370 Elo Tempoverlust).
+- Go/Stop nach der M9-Regel: **Qualität ja, Tempo nein.** Die Gewinnschwelle liegt bei ~1,4–1,6× Verlangsamung
+  (2^(77…97 / 150)). Nötig ist eine schnelle Netz-Bewertung: Akkumulator inkrementell im Copy-Make, int16 statt
+  Float. Bei H = 32 sind das pro Zug wenige Dutzend Additionen pro geänderter Figur statt ~2000 – realistisch
+  erreichbar.
+- Nebenbei: Die Glättung ist auch ein Kandidat für den linearen Teil und für reichere Merkmale (M6 scheiterte
+  vielleicht am selben Rauschen).
+
+### Meilenstein 14: schnelle Netz-Bewertung
+
+- `nnue_quantize`: erste Schicht int16 (QA pro Netz so groß wie möglich, ohne dass eine Summe aus Bias und den 32
+  größten Zeilen überlaufen kann – für das H = 32-Netz ~1000), Ausgabeschicht int16 × int16 → int32 (AVX2
+  `madd`, sonst skalar mit exakt gleichem Ergebnis), linearer Teil als int32 (64 Einheiten pro cp).
+- Suche: ein Akkumulator pro Ply und Farbperspektive. Jeder Knoten meldet sein Brett an; bewertet wird lazy vom
+  tiefsten gültigen Vorfahren aus, pro Zug nur die Figuren, die sich geändert haben (aus den Bitboards abgeleitet –
+  deckt Rochade, en passant, Umwandlung und Nullzug ohne Sonderfälle ab). Die Debug-Build prüft jede Bewertung
+  gegen eine Neuberechnung.
+- Tests: 4515 inkrementelle Updates gleich Neuberechnung; Integer vs. Float höchstens 2 Einheiten beim Testnetz,
+  bis 4 beim echten H = 32-Netz (die Überlaufschranke ist vorsichtig, QA dadurch ~5× kleiner als nötig).
+- Review: Die Schranke berücksichtigt jetzt auch das Runden (vorher hätte ein konstruiertes Netz knapp überlaufen
+  können; bei den echten Netzen war der größte Akkumulator ~5000 von 32767). `make test-debug` war wegen
+  Speicherlecks in `nnue-train` rot und ist wieder grün; ein Match mit Netz läuft jetzt in den Tests (in der
+  Debug-Build mit Prüfung jeder inkrementellen Bewertung). Die Glättung bestraft auch b2, also einen
+  Anzugsbonus des Netzes – so wurden die M13-Netze trainiert; ob ein freier b2 hilft, ist offen.
+
+| Netz `h32-s10-e60` gegen `linear-all` | Knoten/s (Netz / linear) | Elo |
+|---|---|---|
+| gleiche Knoten (5000) | – | +106 ± 15 |
+| **gleiche Zeit (0,1 s/Zug)** | 4,9 / 6,4 Mio. (1,3×) | **+74 ± 15** |
+| zum Vergleich M13, Float von Grund auf | 1,1 / 6,4 Mio. (5,6×) | −153 ± 22 |
+
+- **Go nach der M9-Regel:** Der Tempoverlust (~150 · log2 1,3 ≈ 57 Elo) ist kleiner als der Qualitätsgewinn; das Netz
+  ist bei gleicher Zeit klar stärker als das beste lineare Modell. Grob 2120–2170 auf der Stockfish-Skala
+  (linear-all ~2050–2100), noch nicht direkt gemessen.
+- Das Netz ist offline aus Partien der *linearen* Engine gelernt (M9-Daten). Nächster Schritt: das Netz in die
+  Trainingsschleife (Selbstpartien mit Netz, Netz pro Generation mit `--smooth` nachtrainieren).
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 

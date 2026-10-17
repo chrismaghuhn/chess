@@ -130,8 +130,10 @@ static void *worker(void *arg) {
     for (int k = 0; k < 2; k++) {
         search_set_weights(searchers[k], &m->weights[k]);
         search_set_options(searchers[k], c->options[k]);
-        if (m->has_network[k])
-            search_set_network(searchers[k], &m->networks[k]);
+        if (m->has_network[k] && !search_set_network(searchers[k], &m->networks[k])) {
+            fprintf(stderr, "network for side %c cannot be used (weights too large or out of memory)\n", "ab"[k]);
+            exit(1);
+        }
     }
 
     UciPeer peer, *peer_ptr = NULL;
@@ -368,7 +370,9 @@ int match_main(int argc, char **argv) {
     double score = (m->a_wins + 0.5 * m->draws) / games, elo, error;
     bool saturated;
     elo_estimate(m->a_wins, m->draws, m->b_wins, &elo, &error, &saturated);
-    printf("%s vs %s: +%d =%d -%d, score %.1f%%, Elo %+.0f +/- %.0f%s\n", c.paths[0], c.paths[1],
+    printf("%s%s%s vs %s%s%s: +%d =%d -%d, score %.1f%%, Elo %+.0f +/- %.0f%s\n", c.paths[0],
+           c.nets[0] ? " + net " : "", c.nets[0] ? c.nets[0] : "", c.paths[1], c.nets[1] ? " + net " : "",
+           c.nets[1] ? c.nets[1] : "",
            m->a_wins, m->draws, m->b_wins, 100 * score, elo, error,
            saturated ? " (one-sided: only a bound)" : "");
     printf("summary games=%d a_wins=%d draws=%d b_wins=%d score=%.4f elo=%.1f elo_err=%.1f"
@@ -377,6 +381,9 @@ int match_main(int argc, char **argv) {
 
     pthread_mutex_destroy(&m->lock);
     free(threads);
+    for (int k = 0; k < 2; k++)
+        if (m->has_network[k])
+            nnue_free(&m->networks[k]);
     free(m);
     return 0;
 }

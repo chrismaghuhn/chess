@@ -423,7 +423,59 @@ static void test_nnue(const char *dir) {
         }
     }
     nnue_free(&linear);
-    printf("nnue: checked\n");
+
+    /* Integer form: accumulators updated move by move (null moves too) equal a fresh computation, and the
+       evaluation matches the float network up to rounding. 20 hidden units: padded, more than one lane block. */
+    Network big;
+    QNetwork q;
+    CHECK(nnue_alloc(&big, 20), "allocate network");
+    for (int i = 0; i < NNUE_INPUTS; i++)
+        big.skip[i] = (float)((int)rng_below(&rng, 201) - 100) / 3.0f;
+    for (int i = 0; i < NNUE_INPUTS * 20; i++)
+        big.w1[i] = (float)((int)rng_below(&rng, 2001) - 1000) / 20000.0f;
+    for (int h = 0; h < 20; h++)
+        big.b1[h] = 0.5f + 0.02f * (float)h;
+    for (int h = 0; h < 40; h++)
+        big.w2[h] = (float)((int)rng_below(&rng, 2001) - 1000) / 1000.0f;
+    big.b2 = -0.1f;
+    CHECK(nnue_quantize(&big, &q), "quantize network");
+    int updates = 0, worst = 0;
+    for (int game = 0; game < 40 && failures == 0; game++) {
+        Board p;
+        board_from_fen(&p, fens[game % FEN_COUNT]);
+        NnueAccumulator acc, fresh;
+        nnue_refresh(&q, &p, &acc);
+        for (int ply = 0; ply < 120; ply++) {
+            MoveList list;
+            movegen_legal(&p, &list);
+            if (!list.count)
+                break;
+            Board next;
+            if (!board_in_check(&p) && rng_below(&rng, 10) == 0)
+                board_make_null(&p, &next);
+            else
+                board_make_move(&p, list.moves[rng_below(&rng, (uint64_t)list.count)], &next);
+            NnueAccumulator after;
+            nnue_update(&q, &p, &next, &acc, &after);
+            nnue_refresh(&q, &next, &fresh);
+            updates++;
+            size_t used = (size_t)q.padded * sizeof(int16_t); /* the rest of the arrays is unused */
+            if (memcmp(after.acc[0], fresh.acc[0], used) != 0 || memcmp(after.acc[1], fresh.acc[1], used) != 0
+                || after.skip[0] != fresh.skip[0]
+                || after.skip[1] != fresh.skip[1]) {
+                CHECK(false, "nnue update differs from refresh after ply %d of game %d", ply, game);
+                break;
+            }
+            int diff = abs(nnue_evaluate_quantized(&q, &after, next.side) - nnue_evaluate(&big, &next));
+            worst = diff > worst ? diff : worst;
+            acc = after;
+            p = next;
+        }
+    }
+    CHECK(worst <= 2, "integer network differs from float by %d", worst);
+    nnue_quantized_free(&q);
+    nnue_free(&big);
+    printf("nnue: checked (%d incremental updates, integer vs float at most %d)\n", updates, worst);
 }
 
 int main(int argc, char **argv) {

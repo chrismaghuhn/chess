@@ -1,0 +1,2 @@
+runs/run13-fast/weights/gen26.bin vs zero: +399 =0 -1, score 99.8%, Elo +1040 +/- 155
+summary games=400 a_wins=399 draws=0 b_wins=1 score=0.9975 elo=1040.4 elo_err=154.9 saturated=0 cpu_s=7.104 wall_s=0.510

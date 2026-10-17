@@ -1,0 +1,2 @@
+summary hidden=32 train_games=104000 train_positions=11264945 start_val=0.132012 val=0.121189 start_test=0.132490 test=0.121253 best_epoch=30.0 smooth=30 quiet_change=1.7 cpu_s=5308.6 wall_s=572.6
+runs/run7-n1500/weights/gen12.bin vs runs/run7-n1500/weights/gen12.bin: +1079 =235 -686, score 59.8%, Elo +69 +/- 15

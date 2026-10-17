@@ -39,7 +39,12 @@ struct Search {
     TT tt;
     unsigned options;       /* SEARCH_* switches */
     const Weights *weights;
-    const Network *net;     /* experimental network evaluation, or NULL */
+    const Network *net;     /* network evaluation (experiment), or NULL */
+    QNetwork qnet;          /* its integer form */
+    /* Network accumulators along the current path: the board of each ply, and whether acc[ply] is up to date. */
+    NnueAccumulator *acc;   /* [MAX_PLY] */
+    const Board *acc_board[MAX_PLY];
+    bool acc_valid[MAX_PLY];
     bool zero_weights;      /* all weights 0: generation 0 */
     int piece_value[6];     /* learned: average weight of each piece type */
     int history[2][64][64]; /* [side][from][to] */
@@ -114,8 +119,17 @@ bool search_parse_options(const char *text, unsigned *options) {
     return !(*options & (SEARCH_NMP | SEARCH_LMR)) || (*options & SEARCH_PVS);
 }
 
-void search_set_network(Search *s, const Network *net) {
+bool search_set_network(Search *s, const Network *net) {
+    nnue_quantized_free(&s->qnet);
+    s->net = NULL;
+    if (!net)
+        return true;
+    if (!s->acc && !(s->acc = aligned_alloc(64, MAX_PLY * sizeof *s->acc)))
+        return false;
+    if (!nnue_quantize(net, &s->qnet))
+        return false;
     s->net = net;
+    return true;
 }
 
 void search_set_weights(Search *s, const Weights *weights) {
@@ -142,6 +156,8 @@ void search_free(Search *s) {
     if (!s)
         return;
     tt_free(&s->tt);
+    nnue_quantized_free(&s->qnet);
+    free(s->acc);
     free(s);
 }
 
@@ -297,17 +313,49 @@ static void reward_history(int *entry, int depth) {
     *entry += bonus - *entry * bonus / HISTORY_MAX; /* stays within HISTORY_MAX */
 }
 
+/* Every node registers its board, so the network can update its accumulators lazily along the path. */
+static inline void enter(Search *s, const Board *b, int ply) {
+    if (s->net) {
+        s->acc_board[ply] = b;
+        s->acc_valid[ply] = false;
+    }
+}
+
+/* Network evaluation at ply: updates accumulators from the deepest valid ancestor (or from scratch at the root). */
+static int network_evaluate(Search *s, int ply) {
+    int from = ply;
+    while (from > 0 && !s->acc_valid[from])
+        from--;
+    if (!s->acc_valid[from]) {
+        nnue_refresh(&s->qnet, s->acc_board[from], &s->acc[from]);
+        s->acc_valid[from] = true;
+    }
+    for (int p = from + 1; p <= ply; p++) {
+        nnue_update(&s->qnet, s->acc_board[p - 1], s->acc_board[p], &s->acc[p - 1], &s->acc[p]);
+        s->acc_valid[p] = true;
+    }
+#ifndef NDEBUG
+    NnueAccumulator check;
+    nnue_refresh(&s->qnet, s->acc_board[ply], &check);
+    size_t used = (size_t)s->qnet.padded * sizeof(int16_t);
+    assert(memcmp(check.acc[0], s->acc[ply].acc[0], used) == 0 && memcmp(check.acc[1], s->acc[ply].acc[1], used) == 0
+           && check.skip[0] == s->acc[ply].skip[0] && check.skip[1] == s->acc[ply].skip[1]);
+#endif
+    return nnue_evaluate_quantized(&s->qnet, &s->acc[ply], s->acc_board[ply]->side);
+}
+
 /*
  * The one place the search evaluates a position: the linear evaluation kept
- * incrementally, or, for experiments, a network (milestone 9).
+ * incrementally, or a network (milestones 9 and 14).
  */
-static inline int evaluate(const Search *s, const Board *b, int psq) {
-    return s->net ? nnue_evaluate(s->net, b) : eval_from_psq(psq, b->side);
+static inline int evaluate(Search *s, const Board *b, int psq, int ply) {
+    return s->net ? network_evaluate(s, ply) : eval_from_psq(psq, b->side);
 }
 
 /* psq: the incrementally kept weight sum of b (see eval_psq). */
 static int qsearch(Search *s, const Board *b, int psq, int alpha, int beta, int ply) {
     s->pv_len[ply] = 0;
+    enter(s, b, ply);
     assert(psq == eval_psq(s->weights, b));
     s->nodes++;
     if (ply > s->seldepth)
@@ -315,7 +363,7 @@ static int qsearch(Search *s, const Board *b, int psq, int alpha, int beta, int 
     if (should_stop(s))
         return 0;
     if (ply >= MAX_PLY - 1)
-        return evaluate(s, b, psq);
+        return evaluate(s, b, psq, ply);
 
     /* In check there is no standing pat: try every evasion, none means mate. */
     bool in_check = board_in_check(b);
@@ -323,7 +371,7 @@ static int qsearch(Search *s, const Board *b, int psq, int alpha, int beta, int 
     if (in_check) {
         best = -SCORE_MATE + ply;
     } else {
-        best = evaluate(s, b, psq);
+        best = evaluate(s, b, psq, ply);
         if (best >= beta)
             return best;
         if (best > alpha)
@@ -392,6 +440,7 @@ bool search_quiet(Search *s, const Board *b, uint64_t max_nodes, Board *leaf, in
 
 static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int beta, int ply) {
     s->pv_len[ply] = 0;
+    enter(s, b, ply);
     assert(psq == eval_psq(s->weights, b));
 
     bool root = ply == 0;
@@ -410,7 +459,7 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
 
     if (!root) {
         if (ply >= MAX_PLY - 1)
-            return evaluate(s, b, psq);
+            return evaluate(s, b, psq, ply);
         /* A mate found closer to the root can't be beaten here. */
         if (alpha < -SCORE_MATE + ply)
             alpha = -SCORE_MATE + ply;
@@ -446,7 +495,7 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
     const Bitboard *own = b->pieces[b->side];
     if ((s->options & SEARCH_NMP) && !s->zero_weights && !root && !pv_node && !in_check && depth >= 3
         && (own[KNIGHT] | own[BISHOP] | own[ROOK] | own[QUEEN])
-        && evaluate(s, b, psq) >= beta) {
+        && evaluate(s, b, psq, ply) >= beta) {
         Board null;
         board_make_null(b, &null);
         int reduction = 2 + depth / 4;
