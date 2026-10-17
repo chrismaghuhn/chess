@@ -9,8 +9,9 @@
 #   SEARCH [exact] search options for self-play and matches (see engine match)
 #   LAMBDA [0] weight of self-play search scores in the tuner's target (data v2)
 #   RESIGN [off] calibrated resignation in self-play (on/off)
-#   TUNER_FAST [off] cheaper tuning: stop after 30 epochs without improvement, and resolve
-#                    each data file's quiet leaves only once (cached next to it)
+#   TUNER_FAST [on] cheaper tuning: stop after 30 epochs without improvement, and resolve
+#                   each data file's quiet leaves only once (cached next to it); -41% CPU at the
+#                   same strength (M11). Runs started before M11 continue with TUNER_FAST=off.
 #   THREADS [all cores]                            ENGINE, TUNER: binaries
 #
 # Writes RUN_DIR/generations.csv; logs of every step go to RUN_DIR/logs.
@@ -44,7 +45,7 @@ EPOCHS=${EPOCHS:-400}
 SEARCH=${SEARCH:-exact}
 LAMBDA=${LAMBDA:-0}
 RESIGN=${RESIGN:-off}
-TUNER_FAST=${TUNER_FAST:-off}
+TUNER_FAST=${TUNER_FAST:-on}
 case "$TUNER_FAST" in
     on) tune_extra="--patience 30 --leaf-cache on" ;;
     off) tune_extra="" ;;

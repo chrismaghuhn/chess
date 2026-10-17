@@ -196,6 +196,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 8 | Absolute Elo | Matches gegen Stockfish mit gedrosselter Stärke (nur Messung) |
 | 9 | NNUE (Experiment) | gestoppt: bessere Loss, aber schwächeres Spiel; Nebenbefund: lineares Modell auf allen Daten +97 Elo |
 | 10 | Daten v2: Suchbewertung als Label, kalibrierte Aufgabe | kein Gewinn (λ schadet, Aufgabe ~0); Entdeckung: Tuning ist >50 % der CPU |
+| 11 | Schnelleres Tuning | −41 % CPU bei gleicher Stärke (Geduld + Leaf-Cache) |
 
 ### Meilenstein 5: Tempo
 
@@ -450,6 +451,29 @@ dateneffizienter (erlaubt, weil es unsere eigenen Daten sind).
   zwischenspeichern und nur neue Daten auflösen).
 - Grafik: `runs/v2-comparison.svg`. Format und Optionen bleiben (Standard aus); die gespeicherten Bewertungen werden
   nützlich, falls Labels später aus tieferer Suche kommen.
+
+### Meilenstein 11: schnelleres Tuning
+
+Seit 1500 Knoten pro Zug kostete das Tuning mehr als die Selbstpartien (53–59 %): Jede Generation löste alle bisherigen
+Stellungen neu zu ruhigen Stellungen auf und trainierte fest 400 Epochen.
+
+- **Geduld** (`tuner --patience N`): Schluss nach N Epochen ohne bessere Validierungs-Loss (in der Schleife N = 30).
+- **Leaf-Cache** (`tuner --leaf-cache on`): Die ruhigen Stellungen jeder Datendatei werden einmal berechnet und als
+  `FILE.leaves` daneben gelegt (geprüft per Hash über die Records). Eine Datei wird mit den Gewichten der ersten
+  Tuning-Runde aufgelöst, die sie liest – bei Selbstspieldaten die Generation, die sie gespielt hat; ältere Daten
+  behalten also etwas ältere Auflösungen.
+- `generations.sh`: `TUNER_FAST` (jetzt Standard `on`; vor M11 begonnene Läufe mit `TUNER_FAST=off` fortsetzen).
+
+| (12 Gen., 1500 Knoten) | Selbstpartien | Tuning | gesamt | Anker-Elo Gen 12 |
+|---|---|---|---|---|
+| Lauf 7 | 1344 s | 1525 s | 2869 s | −7 ± 20 |
+| **Lauf 12** (`TUNER_FAST=on`) | 1463 s | **229 s** | **1692 s** | −23 ± 20 |
+
+- Tuning −85 %, gesamt **−41 %** bei gleicher Stärke im Rahmen der Messgenauigkeit; bei gleicher CPU (~1700 s) liegt
+  Lauf 12 rund 85 Elo vor Lauf 7 (`runs/tuning-comparison.svg`).
+- Seit Lauf 1: etwa dieselbe Stärke mit ~1500 statt 4824 CPU-s – rund ein Drittel.
+- Nebenwirkung: Findet das Tuning in 30 Epochen nichts Besseres, bleibt die Generation unverändert (Gen 8 = Gen 7
+  in Lauf 12) – das wirkt wie ein eingebautes Gate.
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 
