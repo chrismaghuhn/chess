@@ -207,7 +207,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 19 | Spielstil für den Lichess-Bot: Contempt, KnightLove | Contempt 50 kostet nichts (−4 ± 14), KnightLove 40 kostet −19 ± 14 |
 | 20 | Suche: RFP, Aspiration, Futility; Zeiteinteilung mit Uhr | **+69 Elo bei gleicher Zeit**; erster Zug auf Lichess 4 statt 22 s |
 | 21 | Suche: SEE-Pruning in der Ruhesuche | **+47 Elo** zusätzlich (Log-LMR, History-Malus, 50-Züge neutral) |
-| 22 | Neustarts aus Endspielstellungen (30 %, ≤ 14 Steine) | schadet (−37 ± 14), Endspiele nicht besser (+3 ± 14) |
+| 22 | Neustarts aus Endspielstellungen (30 %, ≤ 14 Steine) | schadet (−29 ± 14), Endspiele nicht messbar besser (+8 ± 14) |
 
 ### Meilenstein 5: Tempo
 
@@ -737,15 +737,20 @@ Such-Struktur, kein Schachwissen; SEE rechnet mit den gelernten Figurenwerten.
 Beobachtung auf Lichess: lange Endspiele ohne Plan (Bewertung 40 Züge konstant, dann plötzlich Fortschritt oder
 Verlust). Idee aus der Recherche (Braun 2026): Selbstpartien teils aus Stellungen früherer Partien starten.
 `selfplay --starts FILE --start-share PCT --start-max-pieces N --start-plies N` (Neustart = gespeicherte Stellung +
-2 Zufallszüge; Plies zählen ab 0, damit Partiegrenzen erkennbar bleiben), `match --starts` für Endspiel-Tests,
-`net-generations.sh`: `START_SHARE`, `START_MAX_PIECES` (Stellungen aus den Partien der Vorgeneration).
+2 Zufallszüge), `match --starts` für Endspiel-Tests, `net-generations.sh`: `START_SHARE`, `START_MAX_PIECES`
+(Stellungen aus den Partien der Vorgeneration). Datenformat: Bit 1 im Flag-Byte markiert die erste Stellung jeder
+Partie – sonst konnte ein Neustart, dessen letzte Stellung Ply 7 hat, mit der folgenden normalen Partie (ab Ply 8)
+verschmelzen (im ersten Lauf 4–14 Partien pro Datei).
 
-Lauf **net7** = net2 + 30 % Neustarts aus Stellungen mit ≤ 14 Steinen, 20 Generationen (3965 CPU-s):
+Der erste Lauf (net7: −37 ± 14 / +3 ± 14) war doppelt verfälscht: verschmolzene Partien, und seit M21 lösten Tuner
+und nnue-train Stellungen mit der neuen Standardsuche (SEE) auf – andere Labels als bei net2. Beides behoben
+(Auflösung wieder mit `SEARCH_ALL`, geprüft: identische Start-Loss wie vor M21). Wiederholung **net7b**
+(20 Generationen, 4365 CPU-s, alle Dateien 2000 Partien, 0 Label-Fehler):
 
-| net7 Gen 20 gegen net2 Gen 20 (2000 Partien, 5000 Knoten) | Elo |
+| net7b Gen 20 gegen net2 Gen 20 (2000 Partien, 5000 Knoten) | Elo |
 |---|---|
-| normale Partien | **−37 ± 14** |
-| aus Endspielstellungen (≤ 14 Steine, aus net5 Gen 19) | +3 ± 14 |
+| normale Partien | **−29 ± 14** |
+| aus Endspielstellungen (≤ 14 Steine, aus net5 Gen 19) | +8 ± 14 |
 
 - Die Endspiele werden nicht besser, und der Rest leidet (30 % weniger Daten aus Eröffnung und Mittelspiel).
   Vermutlich lernt das Netz Endspiele mit Ergebnis-/Suchlabels aus flacher Suche nicht besser – das Problem dort

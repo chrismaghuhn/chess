@@ -1,0 +1,8 @@
+== net7b gen20 vs net2 gen20, normal, 5000 nodes
+runs/nnue-offline/linear-all.bin + net runs/net7b/nets/gen20.bin vs runs/nnue-offline/linear-all.bin + net runs/net2/nets/gen20.bin: +790 =252 -958, score 45.8%, Elo -29 +/- 14
+settings a_search=2231 b_search=2231 nodes=5000/5000 movetime=0 a_style=0/0 b_style=0/0 seed=56 starts=- random_plies=8
+summary games=2000 a_wins=790 draws=252 b_wins=958 score=0.4580 elo=-29.3 elo_err=14.3 saturated=0 cpu_s=971.242 wall_s=79.890
+== same from endgames (<=14 pieces of net5 gen19)
+runs/nnue-offline/linear-all.bin + net runs/net7b/nets/gen20.bin vs runs/nnue-offline/linear-all.bin + net runs/net2/nets/gen20.bin: +824 =397 -779, score 51.1%, Elo +8 +/- 14
+settings a_search=2231 b_search=2231 nodes=5000/5000 movetime=0 a_style=0/0 b_style=0/0 seed=57 starts=runs/net5/data/gen19.bin random_plies=0
+summary games=2000 a_wins=824 draws=397 b_wins=779 score=0.5112 elo=7.8 elo_err=13.6 saturated=0 cpu_s=314.800 wall_s=26.111
