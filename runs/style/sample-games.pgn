@@ -1,0 +1,20 @@
+[Event "?"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "Schach-Bot (Contempt 50, KnightLove 40)"]
+[Black "Schach-Bot (neutral)"]
+[Result "0-1"]
+
+1. e4 e5 2. Nf3 Nf6 3. Bc4 Nc6 4. Bd5 Nxd5 5. exd5 e4 6. dxc6 exf3 7. Qxf3 Qe7+ 8. Kf1 dxc6 9. Nc3 h5 10. h3 Qf6 11. Qxf6 gxf6 12. d3 Bf5 13. Be3 h4 14. Bd4 Be7 15. Re1 Kf8 16. Kg1 Rd8 17. Ne2 c5 18. Bc3 b5 19. Ba5 Rd7 20. Nf4 Bd6 21. Nd5 Be5 22. Ne3 Rh5 23. b3 Kg7 24. a4 bxa4 25. bxa4 Be6 26. Rd1 c4 27. dxc4 Rxd1+ 28. Nxd1 Bf4 29. Bb4 c5 30. Bc3 Bxc4 31. Nb2 Bd5 32. Nd3 Bd6 33. f3 c4 34. Nf2 Be5 35. Bb4 Bc6 36. a5 Bc7 37. a6 Rb5 38. c3 Rb6 39. Nd1 Rxa6 40. Bc5 Be5 41. f4 Bxf4 42. Be3 Bg3 43. Kf1 Ra1 44. Ke2 Bxg2 45. Rg1 Bxh3 46. Kd2 Bg2 47. Nb2 Rxg1 48. Bxg1 Bd5 49. Nd1 Bf4+ 50. Ne3 h3 51. Ke2 Be6 52. Nf1 a5 53. Kd1 a4 54. Kc2 Bf5+ 55. Kb2 Bd3 56. Nh2 Be2 57. Kc2 Be5 58. Kb2 f5 59. Bd4 Bxd4 60. cxd4 f4 61. d5 Kf6 62. d6 Ke6 63. d7 Kxd7 64. Kb1 Kd6 65. Kb2 Ke5 66. Kc3 a3 67. Kc2 Kd4 68. Kd2 a2 69. Kxe2 a1=Q 70. Ng4 Qg1 71. Nf2 h2 72. Kf3 Qg3+ 73. Ke2 f3+ 74. Ke1 h1=Q+ 75. Kd2 Qxf2# 0-1
+
+[Event "?"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "Schach-Bot (neutral)"]
+[Black "Schach-Bot (Contempt 50, KnightLove 40)"]
+[Result "1/2-1/2"]
+
+1. e4 e5 2. Nf3 Nf6 3. Nc3 Bb4 4. Bc4 c6 5. O-O O-O 6. d4 exd4 7. Qxd4 Bxc3 8. bxc3 d5 9. exd5 cxd5 10. Bd3 Nc6 11. Qh4 h6 12. Re1 Bg4 13. Ba3 Re8 14. Rxe8+ Qxe8 15. Re1 Qd8 16. Ne5 Qa5 17. Nxg4 Nxg4 18. Qxg4 Qxa3 19. Qd7 Rf8 20. Re8 Qxc3 21. h3 g6 22. Rxf8+ Kxf8 23. Qxd5 Kg7 24. g3 b6 25. Qd7 a5 26. Qc7 Qc5 27. Be4 Nd4 28. Qd7 Qe5 29. Bd5 Qf5 30. Qb7 Ne2+ 31. Kg2 Nc3 32. Bf3 b5 33. Qc7 b4 34. g4 Qg5 35. h4 Nd5 36. Qd6 Nf4+ 37. Kg3 Nh5+ 38. Kg2 Qf6 39. Qxf6+ Nxf6 40. Kg3 a4 41. Bc6 a3 42. Kf4 Kg8 43. f3 Kf8 44. g5 hxg5+ 45. hxg5 Nh7 46. Ke4 Nxg5+ 47. Kd3 Ke7 48. Kc4 Ne6 49. Ba8 g5 50. Kxb4 f5 51. Kxa3 g4 52. fxg4 fxg4 53. c4 g3 54. Kb4 Nf4 55. a4 Kd6 56. a5 g2 57. Bxg2 Nxg2 58. Kb5 Kc7 59. Kc5 Kb7 60. Kd5 Ne3+ 61. Kd4 Ng4 62. c5 Nf6 63. c6+ Kxc6 64. a6 Nd7 65. a7 Nb6 66. Ke5 Na8 67. Ke6 Kc5 68. Ke5 Nb6 69. Kf5 Kc4 70. Kf6 Nd5+ 71. Ke6 Nb6 72. Kf5 Kc5 73. Kg6 Kc4 74. Kf7 Kc3 75. Kf6 Na8 76. Ke7 Nb6 77. Kd8 Kc4 78. Kc7 Kc5 79. Kb7 Kb5 80. Kc7 Ka5 81. Kc6 Ka6 82. a8=Q+ Nxa8 1/2-1/2
+

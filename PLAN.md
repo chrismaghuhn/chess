@@ -204,6 +204,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 16 | Suchbewertung des Netzes als Label (λ = 0,5) | +66 in 20 Generationen (Ergebnis allein: +20); **+113 bei gleicher Zeit** gegen das beste lineare Modell |
 | 17 | Gate: nur neueste Generation validiert, 2 Epochen | kein messbarer Unterschied (net4 vs. net2 direkt −0 ± 14) |
 | 18 | Besserer Lehrer (3000 Knoten) und größeres Netz (H = 64) | beides kein Gewinn pro CPU (−15 ± 15 / −10 ± 14 bei gleicher Zeit) |
+| 19 | Spielstil für den Lichess-Bot: Contempt, KnightLove | Contempt 50 kostet nichts (−4 ± 14), KnightLove 40 kostet −19 ± 14 |
 
 ### Meilenstein 5: Tempo
 
@@ -679,6 +680,27 @@ Schleife mit H = 64 (geplant als net6) habe ich deshalb nicht gestartet.
 
 - Stand: Die stärkste Version bleibt net2 Gen 20 (λ = 0,5, H = 32, 1500 Knoten). Weder Gate, Lehrertiefe noch
   Kapazität waren der Engpass; offen bleibt, was die Netz-Schleife schneller lernen lässt.
+
+### Meilenstein 19: Spielstil für den Lichess-Bot
+
+Persönlichkeit statt Stärke – bewusst handgewählte Werte, aber nur für den Bot; Standard 0, Training und Messungen
+bleiben unverändert (Such-Fingerabdruck gleich).
+- **`Contempt`** (UCI, `match --a-contempt`): Ein Remis zählt für die suchende Seite −X (Wiederholung, 50 Züge, Patt,
+  Material) – sie spielt auf Gewinn.
+- **`KnightLove`** (UCI, `match --a-knight-love`): +X pro Springer, den die suchende Seite mehr hat als der Gegner.
+
+`net2` Gen 20 mit Stil gegen sich selbst ohne Stil, 2000 Partien, 5000 Knoten (`runs/style/`):
+
+| Stil | Elo | Remisen |
+|---|---|---|
+| ohne (Kontrolle) | +2 ± 14 | 230 |
+| Contempt 50 | −4 ± 14 | 198 |
+| KnightLove 40 | −19 ± 14 | 246 |
+| beides | −24 ± 14 | 219 |
+
+- Contempt ist praktisch gratis; die Remisquote sinkt im Selbstspiel nur wenig (11,5 → 9,9 %), weil Remisen dort
+  ohnehin selten sind – gegen Menschen wirkt es eher. Die Springerliebe kostet etwa 20 Elo.
+- Beispielpartien: `runs/style/sample-games.pgn` (0,3 s/Zug).
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 
