@@ -68,4 +68,11 @@ FILE *data_open(const char *path, uint64_t *count, int *record_size, char *err, 
 /* Reads the next record; version 1 records get "no score" in bytes 32..35. */
 bool data_read(FILE *f, int record_size, uint8_t out[DATA_RECORD_SIZE]);
 
+/*
+ * The positions of a data file with at most max_pieces pieces (kings
+ * included), as starting positions for games (milestone 22). NULL with
+ * err set if the file cannot be read or has no such position.
+ */
+Board *data_load_starts(const char *path, int max_pieces, size_t *count, char *err, size_t err_size);
+
 #endif

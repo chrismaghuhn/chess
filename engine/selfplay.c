@@ -50,6 +50,10 @@ typedef struct {
     int hash_mb;      /* per thread */
     const char *weights_path;
     const char *net_path; /* evaluate with this network (weights still order moves) */
+    const char *starts_path; /* restart some games from positions of this data file (milestone 22) */
+    int start_share;         /* percent of games that restart */
+    int start_max_pieces;    /* only positions with at most this many pieces */
+    int start_plies;         /* random plies played from a restart position */
     unsigned options; /* search options */
     bool resign;      /* calibrated resignation (see above) */
     const char *out_path;
@@ -75,6 +79,8 @@ typedef struct {
     Weights weights;
     Network net;
     bool has_net;
+    Board *starts;
+    size_t start_count;
     FILE *out;
     bool write_failed;
 
@@ -115,7 +121,8 @@ static void *checked_alloc(size_t size) {
  * either way, the plies at which each candidate threshold would have fired
  * are recorded for calibration.
  */
-static Played *play_game(const Config *c, Search *s, int id, int threshold, bool scores_valid) {
+static Played *play_game(const Config *c, Search *s, int id, int threshold, bool scores_valid, const Board *starts,
+                         size_t start_count) {
     uint64_t rng = c->seed ^ (0xD1B54A32D192ED03ULL * (uint64_t)(id + 1));
     Played *p = checked_alloc(sizeof *p);
     p->records = checked_alloc((size_t)c->max_plies * DATA_RECORD_SIZE);
@@ -125,13 +132,24 @@ static Played *play_game(const Config *c, Search *s, int id, int threshold, bool
     Board start;
     board_from_fen(&start, START_FEN);
     Game g;
-    if (!game_random_opening(&g, &start, c->random_plies, &rng)) {
-        fprintf(stderr, "game %d: no random opening without a game end\n", id);
-        exit(1);
+    int ply = -1;
+    /*
+     * A restart: a stored position plus a few random plies. Its plies count
+     * from 0, so it never looks like the continuation of the game before it.
+     */
+    if (start_count && (int)rng_below(&rng, 100) < c->start_share)
+        for (int attempt = 0; attempt < 8 && ply < 0; attempt++)
+            if (game_random_opening(&g, &starts[rng_below(&rng, start_count)], c->start_plies, &rng))
+                ply = c->start_plies;
+    if (ply < 0) {
+        if (!game_random_opening(&g, &start, c->random_plies, &rng)) {
+            fprintf(stderr, "game %d: no random opening without a game end\n", id);
+            exit(1);
+        }
+        ply = c->random_plies;
     }
 
     search_clear(s);
-    int ply = c->random_plies;
     int recent[RESIGN_PLIES], seen = 0; /* last search scores, white's view */
     GameEnd end;
     GameResult result;
@@ -271,7 +289,8 @@ static void *worker(void *arg) {
         if (id >= sp->cfg.games)
             break;
 
-        Played *p = play_game(&sp->cfg, s, id, threshold, !sp->zero_weights || sp->has_net);
+        Played *p = play_game(&sp->cfg, s, id, threshold, !sp->zero_weights || sp->has_net, sp->starts,
+                              sp->start_count);
         if (calibrating) {
             pthread_mutex_lock(&sp->lock);
             calibrate(sp, p);
@@ -287,7 +306,8 @@ static void usage(void) {
     fprintf(stderr,
             "usage: engine selfplay --out FILE [--games N] [--nodes N] [--threads N]\n"
             "                       [--weights FILE] [--search OPTS] [--seed N] [--random-plies 0..%d]\n"
-            "                       [--max-plies N] [--hash MB] [--resign on|off] [--net FILE]\n",
+            "                       [--max-plies N] [--hash MB] [--resign on|off] [--net FILE]\n"
+            "                       [--starts FILE --start-share PCT [--start-max-pieces N] [--start-plies N]]\n",
             MAX_RANDOM_PLIES);
 }
 
@@ -327,6 +347,14 @@ static bool parse_args(int argc, char **argv, Config *c) {
             c->weights_path = value;
         else if (strcmp(key, "--net") == 0)
             c->net_path = value;
+        else if (strcmp(key, "--starts") == 0)
+            c->starts_path = value;
+        else if (strcmp(key, "--start-share") == 0)
+            ok = parse_int(value, &c->start_share) && c->start_share <= 100;
+        else if (strcmp(key, "--start-max-pieces") == 0)
+            ok = parse_int(value, &c->start_max_pieces) && c->start_max_pieces >= 2 && c->start_max_pieces <= 32;
+        else if (strcmp(key, "--start-plies") == 0)
+            ok = parse_int(value, &c->start_plies) && c->start_plies <= MAX_RANDOM_PLIES;
         else if (strcmp(key, "--resign") == 0)
             ok = (strcmp(value, "on") == 0 && (c->resign = true)) || (strcmp(value, "off") == 0 && !(c->resign = false));
         else if (strcmp(key, "--search") == 0)
@@ -369,7 +397,7 @@ static bool parse_args(int argc, char **argv, Config *c) {
 int selfplay_main(int argc, char **argv) {
     Config c = {
         .games = 100, .threads = 1, .nodes = 5000, .random_plies = 8, .max_plies = 400,
-        .seed = 1, .hash_mb = 4, .options = SEARCH_DEFAULT,
+        .seed = 1, .hash_mb = 4, .options = SEARCH_DEFAULT, .start_max_pieces = 32, .start_plies = 2,
     };
     if (!parse_args(argc, argv, &c)) {
         usage();
@@ -394,8 +422,19 @@ int selfplay_main(int argc, char **argv) {
             return 1;
         }
     }
+    if (c.starts_path && c.start_share > 0) {
+        char err[256];
+        if (!(sp->starts = data_load_starts(c.starts_path, c.start_max_pieces, &sp->start_count, err, sizeof err))) {
+            fprintf(stderr, "%s\n", err);
+            if (sp->has_net)
+                nnue_free(&sp->net);
+            free(sp);
+            return 1;
+        }
+    }
     sp->out = data_create(c.out_path);
     if (!sp->out) {
+        free(sp->starts);
         fprintf(stderr, "cannot create %s\n", c.out_path);
         if (sp->has_net)
             nnue_free(&sp->net);
@@ -470,6 +509,7 @@ int selfplay_main(int argc, char **argv) {
     free(sp->done);
     if (sp->has_net)
         nnue_free(&sp->net);
+    free(sp->starts);
     free(sp);
     return ok ? 0 : 1;
 }

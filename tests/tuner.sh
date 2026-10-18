@@ -193,6 +193,22 @@ SMOOTH=5 loop >/dev/null && fail "network loop resumed with other settings"
 sed -i 's/ lambda=0.5//' "$tmp/net-gens/settings.txt"
 [ "$(loop | grep -c '^  ')" -eq 0 ] || fail "network loop without lambda in its settings did not resume"
 LAMBDA=0.5 loop >/dev/null && fail "network loop without lambda resumed with LAMBDA=0.5"
+# Restarts: endgame positions of earlier games start new ones; labels stay consistent, and matches can
+# start from such positions too.
+timeout 60 "$engine" selfplay --games 12 --nodes 200 --threads 3 --weights "$tmp/tuned1.bin" --starts "$data" \
+    --start-share 100 --start-max-pieces 12 --out "$tmp/restart.bin" >/dev/null 2>&1 || fail "self-play with restarts"
+case "$("$engine" data-info "$tmp/restart.bin" 0)" in
+    *"games=12 "*"label_errors=0 "*) ;;
+    *) fail "self-play with restarts: $("$engine" data-info "$tmp/restart.bin" 0)" ;;
+esac
+timeout 60 "$engine" selfplay --games 12 --nodes 200 --threads 1 --weights "$tmp/tuned1.bin" --starts "$data" \
+    --start-share 100 --start-max-pieces 12 --out "$tmp/restart1.bin" >/dev/null 2>&1
+cmp -s "$tmp/restart.bin" "$tmp/restart1.bin" || fail "self-play with restarts depends on the thread count"
+"$engine" selfplay --games 2 --out "$tmp/x.bin" --starts "$data" --start-share 50 --start-max-pieces 2 2>/dev/null \
+    && fail "restarts without matching positions accepted"
+rs=$(timeout 60 "$engine" match --a "$tmp/tuned1.bin" --games 4 --nodes 200 --threads 2 --starts "$data" \
+    --start-max-pieces 12 --random-plies 0 2>/dev/null)
+[ "$(kv "$rs" games)" = 4 ] || fail "match from start positions: $rs"
 "$nnue_train" --data "$data" --resolve "$tmp/tuned1.bin" --init-net "$tmp/net1.bin" --hidden 8 --out "$tmp/x.bin" \
     2>/dev/null && fail "--init-net with another --hidden accepted"
 # Search scores as labels change the start loss on scored data (game 0 is in the test part); lambda above 1 is refused.

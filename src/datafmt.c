@@ -1,5 +1,6 @@
 #include "datafmt.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 static const char data_magic[4] = { 'S', 'C', 'H', 'D' };
@@ -130,4 +131,32 @@ FILE *data_open(const char *path, uint64_t *count, int *record_size, char *err, 
     *count = (uint64_t)(size - DATA_HEADER_SIZE) / size_field;
     *record_size = (int)size_field;
     return f;
+}
+
+Board *data_load_starts(const char *path, int max_pieces, size_t *count, char *err, size_t err_size) {
+    uint64_t records;
+    int record_size;
+    FILE *f = data_open(path, &records, &record_size, err, err_size);
+    if (!f)
+        return NULL;
+    Board *starts = malloc((records ? records : 1) * sizeof *starts);
+    if (!starts) {
+        fclose(f);
+        snprintf(err, err_size, "out of memory");
+        return NULL;
+    }
+    *count = 0;
+    uint8_t r[DATA_RECORD_SIZE];
+    for (uint64_t i = 0; i < records && data_read(f, record_size, r); i++) {
+        DataPosition pos;
+        if (data_unpack(r, &pos) && popcount(pos.board.all) <= max_pieces)
+            starts[(*count)++] = pos.board;
+    }
+    fclose(f);
+    if (!*count) {
+        free(starts);
+        snprintf(err, err_size, "%s has no position with at most %d pieces", path, max_pieces);
+        return NULL;
+    }
+    return starts;
 }

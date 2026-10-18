@@ -16,6 +16,7 @@
 #include "eval.h"
 #include "movegen.h"
 #include "game.h"
+#include "datafmt.h"
 #include "rng.h"
 #include "nnue.h"
 #include "search.h"
@@ -41,6 +42,8 @@ typedef struct {
     int contempt[2], knight_love[2]; /* playing style of A and B (search_set_style) */
     int movetime;        /* ms per move for both sides instead of nodes; 0 = use nodes */
     const char *uci;     /* B is this external UCI engine instead of weights */
+    const char *starts;  /* pairs start from positions of this data file (then --random-plies more) */
+    int start_max_pieces;
     char *uci_options[32];
     int uci_option_count;
 } Config;
@@ -50,6 +53,8 @@ typedef struct {
     Weights weights[2]; /* A, B */
     Network networks[2];
     bool has_network[2];
+    Board *starts;
+    size_t start_count;
     pthread_mutex_t lock;
     int next_pair;
     int finished;
@@ -159,7 +164,10 @@ static void *worker(void *arg) {
 
         uint64_t rng = c->seed ^ (0xA24BAED4963EE407ULL * (uint64_t)(pair + 1));
         Game opening;
-        if (!game_random_opening(&opening, &start, c->random_plies, &rng)) {
+        bool found = false;
+        for (int attempt = 0; m->start_count && attempt < 8 && !found; attempt++)
+            found = game_random_opening(&opening, &m->starts[rng_below(&rng, m->start_count)], c->random_plies, &rng);
+        if (!found && (m->start_count || !game_random_opening(&opening, &start, c->random_plies, &rng))) {
             fprintf(stderr, "pair %d: no random opening without a game end\n", pair);
             exit(1);
         }
@@ -246,6 +254,7 @@ static void usage(void) {
                     "                    [--threads N] [--seed N] [--random-plies N] [--max-plies N]\n"
                     "                    [--hash MB] [--a-contempt CP] [--b-contempt CP]\n"
                     "                    [--a-knight-love CP] [--b-knight-love CP]\n"
+                    "                    [--starts FILE [--start-max-pieces N]] (pairs start from its positions)\n"
                     "Games are played in pairs with colors swapped; zero means all weights 0.\n"
                     "OPTS: none, all, or a list like pvs,nmp,lmr (default: the engine default).\n"
                     "Experiment: --a-net / --b-net FILE evaluate that side with a network\n"
@@ -258,7 +267,7 @@ int match_main(int argc, char **argv) {
     Config c = {
         .pairs = 100, .threads = 1, .nodes = { 5000, 5000 }, .random_plies = 8, .max_plies = 400,
         .seed = 1, .hash_mb = 4, .paths = { "zero", "zero" },
-        .options = { SEARCH_DEFAULT, SEARCH_DEFAULT },
+        .options = { SEARCH_DEFAULT, SEARCH_DEFAULT }, .start_max_pieces = 32,
     };
     /* --a-nodes / --b-nodes win over --nodes, whatever the order. */
     uint64_t both_nodes = 0, side_nodes[2] = { 0, 0 };
@@ -286,6 +295,10 @@ int match_main(int argc, char **argv) {
             ok = parse_int(value, &c.contempt[key[2] == 'b']) && c.contempt[key[2] == 'b'] <= 1000;
         else if (strcmp(key, "--a-knight-love") == 0 || strcmp(key, "--b-knight-love") == 0)
             ok = parse_int(value, &c.knight_love[key[2] == 'b']) && c.knight_love[key[2] == 'b'] <= 500;
+        else if (strcmp(key, "--starts") == 0)
+            c.starts = value;
+        else if (strcmp(key, "--start-max-pieces") == 0)
+            ok = parse_int(value, &c.start_max_pieces) && c.start_max_pieces >= 2 && c.start_max_pieces <= 32;
         else if (strcmp(key, "--a-search") == 0)
             ok = search_parse_options(value, &c.options[0]);
         else if (strcmp(key, "--b-search") == 0)
@@ -357,6 +370,14 @@ int match_main(int argc, char **argv) {
             return 1;
         }
     }
+    if (c.starts) {
+        char err[256];
+        if (!(m->starts = data_load_starts(c.starts, c.start_max_pieces, &m->start_count, err, sizeof err))) {
+            fprintf(stderr, "%s\n", err);
+            free(m);
+            return 1;
+        }
+    }
     pthread_mutex_init(&m->lock, NULL);
 
     double cpu_start = clock_seconds(CLOCK_PROCESS_CPUTIME_ID);
@@ -391,6 +412,7 @@ int match_main(int argc, char **argv) {
     for (int k = 0; k < 2; k++)
         if (m->has_network[k])
             nnue_free(&m->networks[k]);
+    free(m->starts);
     free(m);
     return 0;
 }

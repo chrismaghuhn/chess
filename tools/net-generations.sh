@@ -10,6 +10,8 @@
 #   GAMES [2000] self-play games per generation   NODES [1500] nodes per move in self-play
 #   WINDOW [4] generations of data the network trains on   EPOCHS [4] per generation
 #   SMOOTH [10] quiet-move penalty (nnue-train --smooth)   LR [0.001] network learning rate
+#   START_SHARE [0] percent of self-play games restarting from positions of the previous generation's games
+#   START_MAX_PIECES [32] only positions with at most this many pieces (e.g. 12: endgames)
 #   VAL_FILES [0 = all] only the newest N generations of the window validate (nnue-train --val-files)
 #   LAMBDA [0.5] weight of the self-play search score in the target (nnue-train --lambda); M16: clearly
 #                better than results only. Runs started without it [0] continue without it.
@@ -49,6 +51,8 @@ if [ -z "${LAMBDA+set}" ] && [ -f "$run/settings.txt" ] && ! grep -q 'lambda=' "
 fi
 LAMBDA=${LAMBDA:-0.5}
 VAL_FILES=${VAL_FILES:-0}
+START_SHARE=${START_SHARE:-0}
+START_MAX_PIECES=${START_MAX_PIECES:-32}
 MATCH_GAMES=${MATCH_GAMES:-400}
 MATCH_NODES=${MATCH_NODES:-1500}
 ANCHOR_GAMES=${ANCHOR_GAMES:-1000}
@@ -59,7 +63,7 @@ ENGINE=${ENGINE:-build/release/engine}
 TRAIN=${TRAIN:-build/release/nnue-train}
 
 case "$WINDOW" in '' | *[!0-9]* | 0) echo "WINDOW must be a number of generations >= 1" >&2; exit 2 ;; esac
-case "$VAL_FILES" in '' | *[!0-9]*) echo "VAL_FILES must be a number" >&2; exit 2 ;; esac
+case "$VAL_FILES$START_SHARE$START_MAX_PIECES" in '' | *[!0-9]*) echo "VAL_FILES, START_SHARE, START_MAX_PIECES must be numbers" >&2; exit 2 ;; esac
 for f in "$NET0" "$WEIGHTS" "$ENGINE" "$TRAIN"; do
     [ -r "$f" ] || { echo "cannot read $f" >&2; exit 1; }
 done
@@ -80,6 +84,7 @@ settings="$settings smooth=$SMOOTH lr=$LR match=$MATCH_GAMES/$MATCH_NODES anchor
 settings="$settings search=$SEARCH engine=$fingerprint"
 [ "$LAMBDA" = 0 ] || settings="$settings lambda=$LAMBDA" # only when used, so older runs keep resuming
 [ "$VAL_FILES" = 0 ] || settings="$settings val_files=$VAL_FILES"
+[ "$START_SHARE" = 0 ] || settings="$settings starts=$START_SHARE/$START_MAX_PIECES"
 if [ -f "$run/settings.txt" ]; then
     if [ "$(cat "$run/settings.txt")" != "$settings" ]; then
         echo "$run was started with: $(cat "$run/settings.txt")" >&2
@@ -126,8 +131,12 @@ for g in $(seq 1 "$gens"); do
     echo "generation $g" >&2
 
     selfplay_log="$run/logs/selfplay$p.txt"
+    starts=""
+    [ "$START_SHARE" = 0 ] || [ "$p" -eq 0 ] \
+        || starts="--starts $run/data/gen$((p - 1)).bin --start-share $START_SHARE --start-max-pieces $START_MAX_PIECES"
+    # shellcheck disable=SC2086
     step "$selfplay_log" "$ENGINE" selfplay --games "$GAMES" --nodes "$NODES" --threads "$THREADS" \
-        --seed $((2000 + p)) --search "$SEARCH" --weights "$WEIGHTS" --net "$(net "$p")" --out "$run/data/gen$p.bin"
+        --seed $((2000 + p)) --search "$SEARCH" --weights "$WEIGHTS" --net "$(net "$p")" --out "$run/data/gen$p.bin" $starts
 
     # Continue the previous network on the last WINDOW generations of data.
     data=""
