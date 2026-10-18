@@ -38,6 +38,7 @@ typedef struct {
     const char *paths[2];
     const char *nets[2]; /* optional network evaluation per side (experiment) */
     unsigned options[2]; /* search options of A and B */
+    int contempt[2], knight_love[2]; /* playing style of A and B (search_set_style) */
     int movetime;        /* ms per move for both sides instead of nodes; 0 = use nodes */
     const char *uci;     /* B is this external UCI engine instead of weights */
     char *uci_options[32];
@@ -130,6 +131,7 @@ static void *worker(void *arg) {
     for (int k = 0; k < 2; k++) {
         search_set_weights(searchers[k], &m->weights[k]);
         search_set_options(searchers[k], c->options[k]);
+        search_set_style(searchers[k], c->contempt[k], c->knight_love[k]);
         if (m->has_network[k] && !search_set_network(searchers[k], &m->networks[k])) {
             fprintf(stderr, "network for side %c cannot be used (weights too large or out of memory)\n", "ab"[k]);
             exit(1);
@@ -242,7 +244,8 @@ static void usage(void) {
     fprintf(stderr, "usage: engine match [--a FILE|zero] [--b FILE|zero] [--a-search OPTS] [--b-search OPTS]\n"
                     "                    [--games N] [--nodes N] [--a-nodes N] [--b-nodes N]\n"
                     "                    [--threads N] [--seed N] [--random-plies N] [--max-plies N]\n"
-                    "                    [--hash MB]\n"
+                    "                    [--hash MB] [--a-contempt CP] [--b-contempt CP]\n"
+                    "                    [--a-knight-love CP] [--b-knight-love CP]\n"
                     "Games are played in pairs with colors swapped; zero means all weights 0.\n"
                     "OPTS: none, all, or a list like pvs,nmp,lmr (default: the engine default).\n"
                     "Experiment: --a-net / --b-net FILE evaluate that side with a network\n"
@@ -279,6 +282,10 @@ int match_main(int argc, char **argv) {
             c.uci = value;
         else if (strcmp(key, "--b-option") == 0 && c.uci_option_count < 32)
             c.uci_options[c.uci_option_count++] = argv[i + 1];
+        else if (strcmp(key, "--a-contempt") == 0 || strcmp(key, "--b-contempt") == 0)
+            ok = parse_int(value, &c.contempt[key[2] == 'b']) && c.contempt[key[2] == 'b'] <= 1000;
+        else if (strcmp(key, "--a-knight-love") == 0 || strcmp(key, "--b-knight-love") == 0)
+            ok = parse_int(value, &c.knight_love[key[2] == 'b']) && c.knight_love[key[2] == 'b'] <= 500;
         else if (strcmp(key, "--a-search") == 0)
             ok = search_parse_options(value, &c.options[0]);
         else if (strcmp(key, "--b-search") == 0)

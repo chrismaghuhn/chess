@@ -67,6 +67,14 @@ bool search_parse_options(const char *text, unsigned *options);
  * (nnue_quantize); false if the network cannot be stored that way or memory
  * runs out, and the search then evaluates linearly.
  */
+/*
+ * Playing style (for the Lichess bot; both 0 by default, as in training):
+ * contempt makes a draw count that much against the searching side, so it
+ * avoids draws; knight_love adds that much per knight it has more than the
+ * opponent. Changing the style clears the hash table.
+ */
+void search_set_style(Search *s, int contempt, int knight_love);
+
 typedef struct Network Network;
 bool search_set_network(Search *s, const Network *net);
 

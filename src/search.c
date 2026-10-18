@@ -45,6 +45,11 @@ struct Search {
     NnueAccumulator *acc;   /* [MAX_PLY] */
     const Board *acc_board[MAX_PLY];
     bool acc_valid[MAX_PLY];
+
+    /* Playing style (milestone 19, for the Lichess bot; 0 = off, as in training and measurements). */
+    int contempt;    /* a draw counts this much against the side that is searching */
+    int knight_love; /* each of its own knights is worth this much more to the searching side */
+    int root_side;   /* the side that is searching */
     bool zero_weights;      /* all weights 0: generation 0 */
     int piece_value[6];     /* learned: average weight of each piece type */
     int history[2][64][64]; /* [side][from][to] */
@@ -346,10 +351,27 @@ static int network_evaluate(Search *s, int ply) {
 
 /*
  * The one place the search evaluates a position: the linear evaluation kept
- * incrementally, or a network (milestones 9 and 14).
+ * incrementally, or a network (milestones 9 and 14), plus the style bonus.
  */
 static inline int evaluate(Search *s, const Board *b, int psq, int ply) {
-    return s->net ? network_evaluate(s, ply) : eval_from_psq(psq, b->side);
+    int score = s->net ? network_evaluate(s, ply) : eval_from_psq(psq, b->side);
+    if (s->knight_love) {
+        int mine = popcount(b->pieces[s->root_side][KNIGHT]) - popcount(b->pieces[!s->root_side][KNIGHT]);
+        score += (b->side == s->root_side ? 1 : -1) * s->knight_love * mine;
+    }
+    return score;
+}
+
+/* Score of a draw for the side to move: worse than 0 for the searching side with contempt. */
+static inline int draw_score(const Search *s, const Board *b) {
+    return b->side == s->root_side ? -s->contempt : s->contempt;
+}
+
+void search_set_style(Search *s, int contempt, int knight_love) {
+    if (s->contempt != contempt || s->knight_love != knight_love)
+        tt_clear(&s->tt); /* stored scores came from the old style */
+    s->contempt = contempt;
+    s->knight_love = knight_love;
 }
 
 /* psq: the incrementally kept weight sum of b (see eval_psq). */
@@ -420,6 +442,7 @@ bool search_quiet(Search *s, const Board *b, uint64_t max_nodes, Board *leaf, in
     s->nodes = 0;
     s->stopped = false;
 
+    s->root_side = b->side;
     int result = qsearch(s, b, eval_psq(s->weights, b), -SCORE_INF, SCORE_INF, 0);
     if (nodes)
         *nodes = s->nodes;
@@ -445,7 +468,7 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
 
     bool root = ply == 0;
     if (!root && is_draw(s, b))
-        return 0;
+        return draw_score(s, b);
 
     bool in_check = board_in_check(b);
     if (in_check)
@@ -604,7 +627,7 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
     }
 
     if (!legal)
-        return in_check ? -SCORE_MATE + ply : 0;
+        return in_check ? -SCORE_MATE + ply : draw_score(s, b);
 
     if (tie_count > 1) {
         /*
@@ -667,6 +690,7 @@ SearchResult search_run(Search *s, const Game *game, const SearchLimits *limits,
     memcpy(s->hashes, game->hashes, (size_t)game->count * sizeof game->hashes[0]);
     s->hash_count = game->count;
     set_time_limits(s, limits, root->side);
+    s->root_side = root->side;
 
     /* Fallback in case the first iteration gets cut off. */
     MoveList list;
