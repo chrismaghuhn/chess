@@ -49,6 +49,8 @@ static void *resolve_worker(void *arg) {
         exit(1);
     }
     search_set_weights(s, job->weights);
+    /* Quiet leaves as before milestone 21: the default search now also skips losing captures (SEE). */
+    search_set_options(s, SEARCH_ALL);
 
     for (size_t i = (size_t)job->id; i < d->count; i += (size_t)job->threads) {
         if (!d->needs_resolving[i])
@@ -251,7 +253,7 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, d
                 return false;
             }
             int ply = r[30] | r[31] << 8;
-            if (ply != prev_ply + 1)
+            if (data_new_game(r, prev_ply))
                 game++; /* a new game starts wherever the ply does not go up by one */
             prev_ply = ply;
             validation[d->count] = val_every > 0 && game % (uint64_t)val_every == 0;
@@ -270,7 +272,7 @@ bool tune_load(TuneData *d, char *const *paths, int path_count, int val_every, d
     for (size_t i = 0; i < d->count; i++) {
         const uint8_t *r = records[i];
         double target = r[28] / 2.0;
-        if (r[34] == 1) {
+        if (r[34] & DATA_FLAG_SCORE) {
             d->scored++;
             int score = (int16_t)(r[32] | r[33] << 8);
             double expected = 1.0 / (1.0 + exp(-score * SIGMOID_SCALE));

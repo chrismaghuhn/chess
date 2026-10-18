@@ -198,6 +198,8 @@ static Played *play_game(const Config *c, Search *s, int id, int threshold, bool
                      : result == GAME_BLACK_WINS ? RESULT_LOSS : RESULT_DRAW;
     for (int i = 0; i < p->count; i++)
         data_set_outcome(p->records[i], white_result, end);
+    if (p->count)
+        p->records[0][34] |= DATA_FLAG_FIRST;
     p->result = result;
     p->end = end;
     p->plies = ply;
@@ -385,6 +387,8 @@ static bool parse_args(int argc, char **argv, Config *c) {
 
     if (!c->out_path)
         fprintf(stderr, "--out is required\n");
+    else if (!c->starts_path != !c->start_share)
+        fprintf(stderr, "--starts and --start-share go together\n");
     else if (c->games < 1 || c->nodes < 1 || c->threads < 1 || c->threads > 256 || c->hash_mb < 1
              || c->random_plies > MAX_RANDOM_PLIES || c->max_plies <= c->random_plies
              || c->max_plies > 10000)
@@ -551,7 +555,7 @@ int data_info_main(int argc, char **argv) {
             continue;
         }
 
-        bool same_game = !last && have_prev && pos.ply == prev.ply + 1;
+        bool same_game = !last && have_prev && !pos.first && pos.ply == prev.ply + 1;
         if (have_prev && !same_game && prev.end == END_MATE && prev.result != RESULT_WIN)
             label_errors++; /* game over: its last position must be the mating side's */
         if (last)

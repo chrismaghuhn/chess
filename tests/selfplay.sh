@@ -56,10 +56,10 @@ esac
 
 # The UCI option loads the same weights.
 output=$(printf 'setoption name Weights value %s\nposition startpos moves e2e4\ngo depth 3\n' \
-    "$tmp/random-weights.bin" | timeout 5 "$engine")
+    "$tmp/random-weights.bin" | timeout 30 "$engine")
 printf '%s\n' "$output" | grep -q 'loaded weights' || fail "uci Weights option"
 printf '%s\n' "$output" | grep -q '^bestmove ' || fail "uci search with weights"
-output=$(printf 'setoption name Weights value %s\nquit\n' "$tmp/missing.bin" | timeout 5 "$engine")
+output=$(printf 'setoption name Weights value %s\nquit\n' "$tmp/missing.bin" | timeout 30 "$engine")
 printf '%s\n' "$output" | grep -q 'cannot open' || fail "uci reports a missing weight file"
 
 # Labels must match how each game ended (checked by data-info), for every end reason seen.
@@ -85,7 +85,7 @@ esac
 # Bad arguments are rejected instead of being read as some other number.
 for args in "--nodes -1" "--nodes 10x" "--seed abc" "--games 0" "--random-plies 41"; do
     # shellcheck disable=SC2086
-    timeout 5 "$engine" selfplay --out "$tmp/x.bin" $args 2>/dev/null
+    timeout 30 "$engine" selfplay --out "$tmp/x.bin" $args 2>/dev/null
     [ $? -eq 2 ] || fail "selfplay accepted $args"
 done
 

@@ -12,6 +12,7 @@
 #include "attacks.h"
 #include "eval.h"
 #include <math.h>
+#include <pthread.h>
 #include "movegen.h"
 #include "nnue.h"
 #include "rng.h"
@@ -52,6 +53,7 @@ struct Search {
     int contempt;    /* a draw counts this much against the side that is searching */
     int knight_love; /* each of its own knights is worth this much more to the searching side */
     int root_side;   /* the side that is searching */
+    int styled_side; /* root side the hash table's style-dependent scores were stored for */
     bool zero_weights;      /* all weights 0: generation 0 */
     int piece_value[6];     /* learned: average weight of each piece type */
     int history[2][64][64]; /* [side][from][to] */
@@ -336,12 +338,16 @@ static void punish_history(int *entry, int depth) {
 
 /* Logarithmic late move reduction by depth and move number (SEARCH_LMRLOG). */
 static int lmr_table[64][64];
+static pthread_once_t lmr_once = PTHREAD_ONCE_INIT;
+
+static void lmr_init(void) {
+    for (int d = 1; d < 64; d++)
+        for (int n = 1; n < 64; n++)
+            lmr_table[d][n] = (int)(0.75 + log(d) * log(n) / 2.25);
+}
 
 static int lmr_reduction(int depth, int moves) {
-    if (!lmr_table[63][63])
-        for (int d = 1; d < 64; d++)
-            for (int n = 1; n < 64; n++)
-                lmr_table[d][n] = (int)(0.75 + log(d) * log(n) / 2.25);
+    pthread_once(&lmr_once, lmr_init);
     return lmr_table[depth < 63 ? depth : 63][moves < 63 ? moves : 63];
 }
 
@@ -520,6 +526,7 @@ bool search_quiet(Search *s, const Board *b, uint64_t max_nodes, Board *leaf, in
     s->stopped = false;
 
     s->root_side = b->side;
+    s->styled_side = -1; /* qsearch stores nothing, but the next search_run must not trust older entries */
     int result = qsearch(s, b, eval_psq(s->weights, b), -SCORE_INF, SCORE_INF, 0);
     if (nodes)
         *nodes = s->nodes;
@@ -672,7 +679,8 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
          * the position is hopeless for them (futility) or when they come late
          * in the ordering (late move pruning). The first move is always searched.
          */
-        if (prunable && legal > 1 && depth <= 3 && (s->options & (SEARCH_FP | SEARCH_LMP)) && !move_is_capture(m)
+        if (prunable && legal > 1 && depth <= 3 && best > -SCORE_MATE_BOUND && (s->options & (SEARCH_FP | SEARCH_LMP))
+            && !move_is_capture(m)
             && !move_is_promo(m) && alpha > -SCORE_MATE_BOUND && !board_in_check(&next)) {
             if ((s->options & SEARCH_FP) && STATIC_EVAL() + 100 + 100 * depth <= alpha)
                 continue;
@@ -809,6 +817,10 @@ SearchResult search_run(Search *s, const Game *game, const SearchLimits *limits,
     s->hash_count = game->count;
     set_time_limits(s, limits, root->side);
     s->root_side = root->side;
+    /* Draw and knight scores depend on who searches: stored ones do not fit the other side. */
+    if ((s->contempt || s->knight_love) && s->styled_side != root->side)
+        tt_clear(&s->tt);
+    s->styled_side = root->side;
 
     /* Fallback in case the first iteration gets cut off. */
     MoveList list;

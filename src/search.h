@@ -66,8 +66,10 @@ enum { SEARCH_PVS = 1, SEARCH_NMP = 2, SEARCH_LMR = 4, SEARCH_ALL = 7, SEARCH_EX
 void search_set_options(Search *s, unsigned options);
 
 /*
- * Parses "none" or a comma list of pvs, nmp, lmr, all (= the three) and exact,
- * e.g. "all,exact"; false if empty, unknown, or NMP/LMR without PVS.
+ * Parses "none" or a comma list of pvs, nmp, lmr, all (= the three), exact,
+ * rfp, fp, lmp, asp, fifty, lmrlog, hist and see, e.g. "all,exact" (the
+ * default is all,rfp,asp,fp,see); false if empty, unknown, or NMP/LMR
+ * without PVS.
  */
 bool search_parse_options(const char *text, unsigned *options);
 

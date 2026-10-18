@@ -87,6 +87,9 @@ static int oracle_mate(const Board *b, int max) {
 
 /* ---- Tests ---- */
 
+/* Node count of the weighted default search below; changes only with the search. */
+#define WEIGHTED_BENCH 139769
+
 static Search *search;
 
 static SearchResult search_fen(const char *fen, int depth, Game *game) {
@@ -192,6 +195,24 @@ static void test_mates(void) {
         CHECK(search_see(search, &b, m) == exchanges[i].see, "see %s: %d, expected %d", exchanges[i].move,
               search_see(search, &b, m), exchanges[i].see);
     }
+
+    /*
+     * Fingerprint of the default search with weights: the engine bench runs with all weights 0,
+     * where RFP, futility, SEE and null moves are off. Update only for an intended search change.
+     */
+    static const char *const bench_fens[] = {
+        "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+    };
+    search_set_options(search, SEARCH_DEFAULT);
+    uint64_t weighted_nodes = 0;
+    for (size_t i = 0; i < sizeof bench_fens / sizeof bench_fens[0]; i++) {
+        Game game;
+        weighted_nodes += search_fen(bench_fens[i], 7, &game).nodes;
+    }
+    CHECK(weighted_nodes == WEIGHTED_BENCH, "weighted default search fingerprint %" PRIu64 " nodes, expected %" PRIu64,
+          weighted_nodes, (uint64_t)WEIGHTED_BENCH);
     search_set_weights(search, NULL);
 
     unsigned options;

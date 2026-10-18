@@ -139,6 +139,7 @@ static void *resolve_worker(void *arg) {
     Job *job = arg;
     Search *s = search_new(1);
     search_set_weights(s, job->weights);
+    search_set_options(s, SEARCH_ALL); /* quiet leaves as before milestone 21 (no SEE pruning) */
     job->counts = xcalloc(job->end - job->begin, 1);
     if (job->d->child_offset)
         job->child_counts = xcalloc(job->end - job->begin, 1);
@@ -201,7 +202,7 @@ static bool load(NetData *d, char **paths, int path_count, long train_games, con
             if (!data_read(f, record_size, r))
                 return false;
             int ply = r[30] | r[31] << 8;
-            if (ply != prev + 1) {
+            if (data_new_game(r, prev)) {
                 game++;
                 total_train += part_of(game, val_files == 0 || p >= path_count - val_files) == TRAIN;
             }
@@ -234,7 +235,7 @@ static bool load(NetData *d, char **paths, int path_count, long train_games, con
             if (!data_read(f, record_size, r))
                 return false;
             int ply = r[30] | r[31] << 8;
-            if (ply != prev + 1) {
+            if (data_new_game(r, prev)) {
                 game++;
                 part = part_of(game, val_files == 0 || p >= path_count - val_files);
                 keep = true;

@@ -291,7 +291,7 @@ static void test_data_format(const char *dir) {
         { "unused nibble set", "4k3/8/8/8/8/8/8/4K3 w - - 0 1", 9, 0x01 },
         { "more than 32 pieces", START_FEN, 2, 0xFF },
         { "a score marked invalid", START_FEN, 32, 5 },
-        { "unknown flags", START_FEN, 34, 2 },
+        { "unknown flags", START_FEN, 34, 4 },
         { "reserved byte 35", START_FEN, 35, 1 },
     };
     for (size_t i = 0; i < sizeof broken / sizeof broken[0]; i++) {

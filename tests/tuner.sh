@@ -206,6 +206,22 @@ timeout 60 "$engine" selfplay --games 12 --nodes 200 --threads 1 --weights "$tmp
 cmp -s "$tmp/restart.bin" "$tmp/restart1.bin" || fail "self-play with restarts depends on the thread count"
 "$engine" selfplay --games 2 --out "$tmp/x.bin" --starts "$data" --start-share 50 --start-max-pieces 2 2>/dev/null \
     && fail "restarts without matching positions accepted"
+"$engine" selfplay --games 2 --out "$tmp/x.bin" --starts "$data" 2>/dev/null && fail "--starts without --start-share accepted"
+# Mixed: restarted and normal games interleave in the file, and every game is still told apart (first-position
+# flag), also when a restart's plies would continue into the next game's.
+timeout 120 "$engine" selfplay --games 40 --nodes 200 --threads 4 --weights "$tmp/tuned1.bin" --starts "$data" \
+    --start-share 50 --start-max-pieces 12 --out "$tmp/restart-mixed.bin" >/dev/null 2>&1 || fail "mixed restarts"
+case "$("$engine" data-info "$tmp/restart-mixed.bin" 0)" in
+    *"games=40 "*"label_errors=0 "*) ;;
+    *) fail "mixed restarts: $("$engine" data-info "$tmp/restart-mixed.bin" 0)" ;;
+esac
+restarts=$(python3 -c '
+import sys
+d = open(sys.argv[1], "rb").read()
+first = [d[i:i + 36] for i in range(16, len(d), 36) if d[i + 34] & 2]
+print(len(first), sum(1 for r in first if r[30] | r[31] << 8 != 8))' "$tmp/restart-mixed.bin")
+set -- $restarts
+[ "$1" = 40 ] && [ "$2" -gt 5 ] && [ "$2" -lt 35 ] || fail "mixed restarts: $1 games marked, $2 restarted"
 rs=$(timeout 60 "$engine" match --a "$tmp/tuned1.bin" --games 4 --nodes 200 --threads 2 --starts "$data" \
     --start-max-pieces 12 --random-plies 0 2>/dev/null)
 [ "$(kv "$rs" games)" = 4 ] || fail "match from start positions: $rs"

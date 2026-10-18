@@ -403,6 +403,11 @@ int match_main(int argc, char **argv) {
            c.nets[1] ? c.nets[1] : "",
            m->a_wins, m->draws, m->b_wins, 100 * score, elo, error,
            saturated ? " (one-sided: only a bound)" : "");
+    /* What was compared, so a saved result documents itself. */
+    printf("settings a_search=%u b_search=%u nodes=%" PRIu64 "/%" PRIu64 " movetime=%d a_style=%d/%d b_style=%d/%d"
+           " seed=%" PRIu64 " starts=%s random_plies=%d\n",
+           c.options[0], c.options[1], c.nodes[0], c.nodes[1], c.movetime, c.contempt[0], c.knight_love[0],
+           c.contempt[1], c.knight_love[1], c.seed, c.starts ? c.starts : "-", c.random_plies);
     printf("summary games=%d a_wins=%d draws=%d b_wins=%d score=%.4f elo=%.1f elo_err=%.1f"
            " saturated=%d cpu_s=%.3f wall_s=%.3f\n",
            games, m->a_wins, m->draws, m->b_wins, score, elo, error, saturated, cpu, wall);

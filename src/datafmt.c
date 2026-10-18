@@ -35,7 +35,7 @@ void data_pack(const Board *b, int result, int ply, int score, bool score_valid,
     put_le(out + 30, (uint64_t)ply, 2);
     int16_t s = (int16_t)(!score_valid ? 0 : score > 32767 ? 32767 : score < -32768 ? -32768 : score);
     put_le(out + 32, (uint16_t)s, 2);
-    out[34] = score_valid ? 1 : 0;
+    out[34] = score_valid ? DATA_FLAG_SCORE : 0;
 }
 
 void data_set_outcome(uint8_t record[DATA_RECORD_SIZE], int white_result, GameEnd end) {
@@ -47,8 +47,8 @@ bool data_unpack(const uint8_t in[DATA_RECORD_SIZE], DataPosition *out) {
     Bitboard occupied = get_le(in, 8);
     int pieces = popcount(occupied);
     int16_t score = (int16_t)get_le(in + 32, 2);
-    if (pieces > 32 || in[28] > RESULT_WIN || in[29] >= END_COUNT || in[34] > 1 || in[35]
-        || (!in[34] && score))
+    if (pieces > 32 || in[28] > RESULT_WIN || in[29] >= END_COUNT || in[34] > 3 || in[35]
+        || (!(in[34] & DATA_FLAG_SCORE) && score))
         return false;
     for (int n = pieces; n < 32; n++)
         if (in[8 + n / 2] >> (4 * (n & 1)) & 15)
@@ -71,7 +71,8 @@ bool data_unpack(const uint8_t in[DATA_RECORD_SIZE], DataPosition *out) {
     out->end = (GameEnd)in[29];
     out->ply = ply;
     out->score = score;
-    out->score_valid = in[34] == 1;
+    out->score_valid = in[34] & DATA_FLAG_SCORE;
+    out->first = in[34] & DATA_FLAG_FIRST;
     return true;
 }
 
@@ -147,7 +148,13 @@ Board *data_load_starts(const char *path, int max_pieces, size_t *count, char *e
     }
     *count = 0;
     uint8_t r[DATA_RECORD_SIZE];
-    for (uint64_t i = 0; i < records && data_read(f, record_size, r); i++) {
+    for (uint64_t i = 0; i < records; i++) {
+        if (!data_read(f, record_size, r)) {
+            free(starts);
+            fclose(f);
+            snprintf(err, err_size, "%s: read error", path);
+            return NULL;
+        }
         DataPosition pos;
         if (data_unpack(r, &pos) && popcount(pos.board.all) <= max_pieces)
             starts[(*count)++] = pos.board;
