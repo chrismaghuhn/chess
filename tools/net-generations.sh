@@ -10,8 +10,8 @@
 #   GAMES [2000] self-play games per generation   NODES [1500] nodes per move in self-play
 #   WINDOW [4] generations of data the network trains on   EPOCHS [4] per generation
 #   SMOOTH [10] quiet-move penalty (nnue-train --smooth)   LR [0.001] network learning rate
-#   LAMBDA [0.5] weight of the self-play search score in the target (nnue-train --lambda); M16: 0.5 learns
-#                about 3x as much as results only. Runs started without it [0] continue without it.
+#   LAMBDA [0.5] weight of the self-play search score in the target (nnue-train --lambda); M16: clearly
+#                better than results only. Runs started without it [0] continue without it.
 #   MATCH_GAMES [400] games against the previous generation, MATCH_NODES [1500]
 #   ANCHOR_GAMES [1000] games against WEIGHTS, ANCHOR_NODES [5000]
 #   SEARCH [exact] self-play search options; matches use the engine's default search
@@ -19,7 +19,10 @@
 #
 # Writes RUN_DIR/generations.csv; logs of every step go to RUN_DIR/logs. Running it again skips
 # steps whose log is complete; once a step had to run, every later step runs again too. It refuses
-# to continue with other settings than the run was started with (THREADS may change).
+# to continue with other settings than the run was started with (THREADS may change); the engine
+# fingerprint covers the search without a network, so changed network or trainer code goes unnoticed.
+# A generation whose network did not change is not measured again (its matches are copied as 0 / the
+# previous anchor result).
 #
 # Cost = CPU seconds of self-play and training; matches only measure. Elo vs the anchor is at equal
 # nodes, which flatters the network (it is ~1.3x slower); check the end result at equal time.
@@ -27,7 +30,7 @@ set -eu
 export LC_ALL=C
 
 if [ $# -ne 2 ]; then
-    sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,$ { /^#/!q; p; }' "$0" | sed 's/^# \{0,1\}//'
     exit 2
 fi
 run=$1
@@ -53,13 +56,22 @@ THREADS=${THREADS:-$(nproc)}
 ENGINE=${ENGINE:-build/release/engine}
 TRAIN=${TRAIN:-build/release/nnue-train}
 
-mkdir -p "$run/data" "$run/nets" "$run/logs"
-csv="$run/generations.csv"
-
+case "$WINDOW" in '' | *[!0-9]* | 0) echo "WINDOW must be a number of generations >= 1" >&2; exit 2 ;; esac
+for f in "$NET0" "$WEIGHTS" "$ENGINE" "$TRAIN"; do
+    [ -r "$f" ] || { echo "cannot read $f" >&2; exit 1; }
+done
+# Everything settings.txt records must be known before it is written.
 fingerprint=$("$ENGINE" bench 7 "$SEARCH" | sed -n 's/^\([0-9]*\) nodes.*/\1/p')
-hidden=$(od -An -tu4 -j12 -N4 "$NET0" | tr -d ' ')
+hidden=$(od -An -tu4 -j12 -N4 "$NET0" | tr -d ' ') # little-endian uint32 after magic, version, inputs
 net0_sum=$(cksum <"$NET0" | cut -d' ' -f1)
 weights_sum=$(cksum <"$WEIGHTS" | cut -d' ' -f1)
+if [ -z "$fingerprint" ] || [ -z "$hidden" ] || [ -z "$net0_sum" ] || [ -z "$weights_sum" ]; then
+    echo "cannot read the engine fingerprint or the network header" >&2
+    exit 1
+fi
+
+mkdir -p "$run/data" "$run/nets" "$run/logs"
+csv="$run/generations.csv"
 settings="net0=$net0_sum weights=$weights_sum games=$GAMES nodes=$NODES window=$WINDOW epochs=$EPOCHS"
 settings="$settings smooth=$SMOOTH lr=$LR match=$MATCH_GAMES/$MATCH_NODES anchor=$ANCHOR_GAMES/$ANCHOR_NODES"
 settings="$settings search=$SEARCH engine=$fingerprint"
@@ -74,7 +86,7 @@ if [ -f "$run/settings.txt" ]; then
 else
     echo "$settings" >"$run/settings.txt"
 fi
-cp "$NET0" "$run/nets/gen0.bin"
+cmp -s "$NET0" "$run/nets/gen0.bin" || cp "$NET0" "$run/nets/gen0.bin"
 
 kv() {
     sed -n "s/^summary .* $2=\([^ ]*\).*/\1/p; s/^summary $2=\([^ ]*\).*/\1/p" "$1"
@@ -124,10 +136,16 @@ for g in $(seq 1 "$gens"); do
         --epochs "$EPOCHS" --lr "$LR" --smooth "$SMOOTH" --lambda "$LAMBDA" --threads "$THREADS" --out "$(net "$g")"
 
     prev_log="$run/logs/match$g-vs-$p.txt"
-    step "$prev_log" "$ENGINE" match --a "$WEIGHTS" --a-net "$(net "$g")" --b "$WEIGHTS" --b-net "$(net "$p")" \
-        --games "$MATCH_GAMES" --nodes "$MATCH_NODES" --threads "$THREADS" --seed 7
     anchor_log="$run/logs/anchor$g.txt"
-    anchor "$anchor_log" "$g"
+    if cmp -s "$(net "$g")" "$(net "$p")"; then
+        # Training found nothing better: the same network, nothing new to measure.
+        step "$prev_log" echo "summary games=0 a_wins=0 draws=0 b_wins=0 score=0.5 elo=0.0 elo_err=0.0 identical=1"
+        step "$anchor_log" cat "$run/logs/anchor$p.txt"
+    else
+        step "$prev_log" "$ENGINE" match --a "$WEIGHTS" --a-net "$(net "$g")" --b "$WEIGHTS" --b-net "$(net "$p")" \
+            --games "$MATCH_GAMES" --nodes "$MATCH_NODES" --threads "$THREADS" --seed 7
+        anchor "$anchor_log" "$g"
+    fi
 
     selfplay_cpu=$(kv "$selfplay_log" cpu_s)
     train_cpu=$(kv "$train_log" cpu_s)

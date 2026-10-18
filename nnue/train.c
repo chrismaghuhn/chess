@@ -62,7 +62,8 @@ typedef struct {
     size_t count;
     uint64_t *offset; /* inputs of position i: input[offset[i] .. offset[i+1]) */
     uint16_t *input;  /* side to move's perspective of the quiet leaf */
-    float *target;    /* result for the leaf's side to move: 0, 0.5, 1 */
+    float *target;    /* for the leaf's side to move: the result (0, 0.5, 1), mixed with the score by --lambda */
+    size_t scored;    /* positions whose target used a search score */
     uint64_t *child_offset; /* inputs of a random quiet child of leaf i (none: empty), its side to move's view */
     uint16_t *child_input;
     uint8_t *split;
@@ -92,7 +93,7 @@ typedef struct {
     const uint8_t (*records)[DATA_RECORD_SIZE];
     const Weights *weights;
     double lambda;
-    size_t begin, end;
+    size_t begin, end, scored;
     uint16_t *input, *child_input;
     size_t length, capacity, child_length, child_capacity;
     uint8_t *counts, *child_counts;
@@ -157,6 +158,7 @@ static void *resolve_worker(void *arg) {
         if (pos.score_valid && job->lambda > 0) { /* 0: results only, exactly as before */
             double expected = 1.0 / (1.0 + exp(-pos.score * SIGMOID_SCALE));
             y = pos.end == END_PLY_LIMIT ? expected : job->lambda * expected + (1 - job->lambda) * y;
+            job->scored++;
         }
         job->d->target[i] = (float)(leaf.side == pos.board.side ? y : 1.0 - y);
     }
@@ -262,6 +264,7 @@ static bool load(NetData *d, char **paths, int path_count, long train_games, con
         pthread_join(ids[t], NULL);
         total += jobs[t].length;
         child_total += jobs[t].child_length;
+        d->scored += jobs[t].scored;
     }
     if (children) {
         d->child_input = xcalloc(child_total, sizeof *d->child_input);
@@ -544,6 +547,10 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
+    if (init_path && init_net_path) {
+        fprintf(stderr, "--init-linear and --init-net exclude each other (the network has its own linear part)\n");
+        return 2;
+    }
     if (!out || !resolve_path || !path_count) {
         fprintf(stderr, "usage: nnue-train --out FILE --resolve WEIGHTS --data FILE [...] (see source)\n");
         return 2;
@@ -612,6 +619,8 @@ int main(int argc, char **argv) {
     for (int c = 0; c < CHUNKS; c++)
         nnue_alloc(&pass->grads[c], (int)hidden);
 
+    if (!d.in_split[VALIDATION])
+        fprintf(stderr, "warning: no validation games (game %% 10 == 5 of each file); the start network is kept\n");
     size_t sample = d.in_split[VALIDATION] < 20000 ? d.in_split[VALIDATION] : 20000;
     double start_val = run_pass(pass, sets[VALIDATION], d.in_split[VALIDATION], false, NULL);
     double start_test = run_pass(pass, sets[TEST], d.in_split[TEST], false, NULL);
@@ -695,8 +704,8 @@ int main(int argc, char **argv) {
     }
     double cpu = clock_seconds(CLOCK_PROCESS_CPUTIME_ID) - cpu0, wall = clock_seconds(CLOCK_MONOTONIC) - wall0;
     printf("summary hidden=%ld train_games=%zu train_positions=%zu start_val=%.6f val=%.6f start_test=%.6f test=%.6f"
-           " best_epoch=%.1f smooth=%g lambda=%g quiet_change=%.1f cpu_s=%.1f wall_s=%.1f\n",
-           hidden, d.games[TRAIN], train_n, start_val, best_val, start_test, test, best_epoch, smooth, lambda, test_change, cpu,
+           " best_epoch=%.1f smooth=%g lambda=%g scored=%zu quiet_change=%.1f cpu_s=%.1f wall_s=%.1f\n",
+           hidden, d.games[TRAIN], train_n, start_val, best_val, start_test, test, best_epoch, smooth, lambda, d.scored, test_change, cpu,
            wall);
     return 0;
 }
