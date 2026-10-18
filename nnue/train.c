@@ -6,6 +6,7 @@
  *   nnue-train --out FILE --resolve WEIGHTS --data FILE [--data FILE ...]
  *              [--init-linear WEIGHTS] [--hidden H] [--epochs N] [--batch N] [--lr X]
  *              [--lr-linear X] [--wd X] [--train-games N] [--threads N] [--seed N] [--smooth X]
+ *              [--init-net FILE]
  *
  * Positions are resolved to quiet leaves with the --resolve linear weights,
  * as in the linear tuner. Split by the game number inside each file: % 10 == 0
@@ -13,7 +14,9 @@
  * games that share an opening across runs land in the same part.
  * --train-games keeps only that many training games, evenly spread (for the
  * learning curve). --hidden 0 trains the linear part alone with the same
- * pipeline, as the baseline.
+ * pipeline, as the baseline. --init-net continues from a network (same
+ * --hidden) instead; with validation picking the epoch, a network that does
+ * not get better is written back unchanged.
  *
  * --smooth X (milestone 13): game results label whole games, so they say
  * nothing about how the value changes from one move to the next - yet that
@@ -483,7 +486,7 @@ int main(int argc, char **argv) {
     chess_init();
     char *paths[MAX_FILES];
     int path_count = 0;
-    const char *out = NULL, *resolve_path = NULL, *init_path = NULL;
+    const char *out = NULL, *resolve_path = NULL, *init_path = NULL, *init_net_path = NULL;
     long hidden = 32, epochs = 30, batch = 16384, train_games = 0, threads = 1, seed = 1;
     double lr = 1e-3, lr_linear = 0.05, wd = 0.01, smooth = 0;
 
@@ -498,6 +501,8 @@ int main(int argc, char **argv) {
             resolve_path = value;
         else if (strcmp(key, "--init-linear") == 0)
             init_path = value;
+        else if (strcmp(key, "--init-net") == 0)
+            init_net_path = value;
         else if (strcmp(key, "--data") == 0 && path_count < MAX_FILES)
             paths[path_count++] = argv[i + 1];
         else if (strcmp(key, "--hidden") == 0)
@@ -573,6 +578,19 @@ int main(int argc, char **argv) {
     for (long h = 0; h < 2 * hidden; h++)
         net.w2[h] = (float)((((double)rng_next(&rng) / 18446744073709551616.0) * 2 - 1) / sqrt(2.0 * (double)hidden));
     net.b2 = 0;
+    if (init_net_path) {
+        Network start;
+        if (!nnue_load(&start, init_net_path, err, sizeof err)) {
+            fprintf(stderr, "%s\n", err);
+            return 1;
+        }
+        if (start.hidden != hidden) {
+            fprintf(stderr, "%s has %d hidden units, not %ld\n", init_net_path, start.hidden, hidden);
+            return 1;
+        }
+        net_copy(&net, &start);
+        nnue_free(&start);
+    }
 
     Pass *pass = xcalloc(1, sizeof *pass);
     pass->d = &d;

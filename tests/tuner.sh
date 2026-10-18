@@ -168,6 +168,26 @@ nm=$(timeout 120 "$engine" match --a "$tmp/tuned1.bin" --a-net "$tmp/net1.bin" -
 [ $(($(kv "$nm" a_wins) + $(kv "$nm" draws) + $(kv "$nm" b_wins))) -eq 4 ] 2>/dev/null || fail "match with a network: $nm"
 printf '%s\n' "$nm" | grep -q "+ net $tmp/net1.bin vs" || fail "match does not name the network"
 
+# Self-play with a network writes scored data; the network loop runs and resumes without redoing anything.
+timeout 60 "$engine" selfplay --games 4 --nodes 300 --threads 2 --weights "$tmp/tuned1.bin" --net "$tmp/net1.bin" \
+    --out "$tmp/net-play.bin" >/dev/null 2>&1 || fail "self-play with a network"
+case "$("$engine" data-info "$tmp/net-play.bin" 0)" in
+    *"label_errors=0 "*) ;;
+    *) fail "self-play with a network: bad labels" ;;
+esac
+"$engine" data-info "$tmp/net-play.bin" 0 | grep -q " scored=0 " && fail "self-play with a network stored no scores"
+loop() {
+    NET0="$tmp/net1.bin" WEIGHTS="$tmp/tuned1.bin" GAMES=8 NODES=200 EPOCHS=2 MATCH_GAMES=2 MATCH_NODES=200 \
+        ANCHOR_GAMES=2 ANCHOR_NODES=200 THREADS=4 ENGINE="$engine" TRAIN="$nnue_train" \
+        timeout 300 sh tools/net-generations.sh "$tmp/net-gens" 2 2>&1
+}
+rm -rf "$tmp/net-gens"
+loop >/dev/null || fail "network loop"
+[ "$(wc -l <"$tmp/net-gens/generations.csv")" -eq 4 ] || fail "network loop: generations.csv should have 4 lines"
+[ "$(loop | grep -c '^  ')" -eq 0 ] || fail "network loop resume redid steps"
+"$nnue_train" --data "$data" --resolve "$tmp/tuned1.bin" --init-net "$tmp/net1.bin" --hidden 8 --out "$tmp/x.bin" \
+    2>/dev/null && fail "--init-net with another --hidden accepted"
+
 # The quiet-move penalty makes the network part change less over a quiet move.
 rough=$(timeout 120 "$nnue_train" --data "$data" --resolve "$tmp/tuned1.bin" --out "$tmp/net-rough.bin" --hidden 16 \
     --train-games 10 --epochs 20 --batch 256 --lr 0.01 --threads 4 2>/dev/null)
