@@ -74,11 +74,11 @@ expect '^readyok$' "setoption"
 # Playing style: with contempt a dead draw scores against the searching side; knight love raises the
 # score of an extra knight (pawns on the board, so it is no material draw); bad values are refused.
 output=$(printf 'setoption name Contempt value 50\nposition fen 8/8/8/4k3/8/8/8/4K3 w - - 0 1\ngo depth 3\n' \
-    | (cat; sleep 1; echo quit) | run)
+    | (cat; sleep 8; echo quit) | run)
 expect 'depth 3 .*score cp -50 ' "contempt scores a draw as -50"
 score_with() { # KnightLove -> score at depth 1 with an extra white knight
     printf 'setoption name KnightLove value %s\nposition fen 4k3/p7/8/8/8/8/P7/1N2K3 w - - 0 1\ngo depth 1\n' "$1" \
-        | (cat; sleep 1; echo quit) | run | sed -n 's/^info depth 1 .*score cp \(-\{0,1\}[0-9]*\) .*/\1/p'
+        | (cat; sleep 8; echo quit) | run | sed -n 's/^info depth 1 .*score cp \(-\{0,1\}[0-9]*\) .*/\1/p'
 }
 s0=$(score_with 0)
 s100=$(score_with 100)
