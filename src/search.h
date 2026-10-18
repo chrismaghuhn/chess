@@ -57,8 +57,11 @@ enum { SEARCH_PVS = 1, SEARCH_NMP = 2, SEARCH_LMR = 4, SEARCH_ALL = 7, SEARCH_EX
        SEARCH_EVERYTHING = 4095 & ~SEARCH_EXACT_TIES };
 
 /* What the engine uses unless told otherwise (UCI, self-play, matches, bench). */
-/* Milestone 20: rfp + asp + fp gave +69 +/- 14 Elo at equal time; lmp (-17) is left out. */
-#define SEARCH_DEFAULT ((unsigned)(SEARCH_ALL | SEARCH_RFP | SEARCH_ASP | SEARCH_FP))
+/*
+ * Milestone 20: rfp + asp + fp gave +69 +/- 14 Elo at equal time; lmp (-17) is left out.
+ * Milestone 21: see gave another +47 +/- 14; lmrlog (+6), hist (-5) and fifty (-5) are left out.
+ */
+#define SEARCH_DEFAULT ((unsigned)(SEARCH_ALL | SEARCH_RFP | SEARCH_ASP | SEARCH_FP | SEARCH_SEE))
 
 void search_set_options(Search *s, unsigned options);
 

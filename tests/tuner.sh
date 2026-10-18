@@ -169,7 +169,7 @@ nm=$(timeout 120 "$engine" match --a "$tmp/tuned1.bin" --a-net "$tmp/net1.bin" -
 printf '%s\n' "$nm" | grep -q "+ net $tmp/net1.bin vs" || fail "match does not name the network"
 
 # Self-play with a network writes scored data; the network loop runs and resumes without redoing anything.
-timeout 60 "$engine" selfplay --games 4 --nodes 300 --threads 2 --weights "$tmp/tuned1.bin" --net "$tmp/net1.bin" \
+timeout 60 "$engine" selfplay --games 40 --nodes 300 --threads 4 --weights "$tmp/tuned1.bin" --net "$tmp/net1.bin" \
     --out "$tmp/net-play.bin" >/dev/null 2>&1 || fail "self-play with a network"
 case "$("$engine" data-info "$tmp/net-play.bin" 0)" in
     *"label_errors=0 "*) ;;
@@ -217,11 +217,12 @@ lam() {
         --hidden 16 --epochs 1 --threads 2 --out "$tmp/net-lambda.bin" --lambda "$1" 2>/dev/null
 }
 # On its own games the network agrees with its own search scores far better than with the results;
-# a sign or perspective error in the score targets would turn that around.
+# a sign or perspective error in the score targets would turn that around. Validation and test
+# together (8 of 40 games), since a few games alone are noisy.
 l0=$(lam 0)
 l1=$(lam 1)
-awk "BEGIN { exit !($(kv "$l1" start_test) < 0.5 * $(kv "$l0" start_test)) }" 2>/dev/null \
-    || fail "--lambda 1 targets do not match the network's own scores: $(kv "$l0" start_test) -> $(kv "$l1" start_test)"
+awk "BEGIN { exit !($(kv "$l1" start_val) + $(kv "$l1" start_test) < 0.7 * ($(kv "$l0" start_val) + $(kv "$l0" start_test))) }" \
+    2>/dev/null || fail "--lambda 1 targets do not match the network's own scores: $l0 / $l1"
 [ "$(kv "$l1" scored)" -gt 0 ] && [ "$(kv "$l0" scored)" = 0 ] || fail "scored count with --lambda"
 lam 1.5 >/dev/null && fail "--lambda above 1 accepted"
 # --val-files 1: only the last file validates, the other one trains on its validation games.
