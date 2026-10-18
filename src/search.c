@@ -100,7 +100,8 @@ bool search_parse_options(const char *text, unsigned *options) {
         const char *name;
         unsigned flag;
     } names[] = { { "pvs", SEARCH_PVS }, { "nmp", SEARCH_NMP }, { "lmr", SEARCH_LMR },
-                  { "all", SEARCH_ALL }, { "exact", SEARCH_EXACT_TIES } };
+                  { "all", SEARCH_ALL }, { "exact", SEARCH_EXACT_TIES }, { "rfp", SEARCH_RFP }, { "fp", SEARCH_FP },
+                  { "lmp", SEARCH_LMP }, { "asp", SEARCH_ASP } };
 
     *options = 0;
     if (strcmp(text, "none") == 0)
@@ -225,8 +226,14 @@ static void set_time_limits(Search *s, const SearchLimits *l, int side) {
         double inc = l->inc[side] > 0 ? l->inc[side] / 1000.0 : 0;
         int moves = l->movestogo > 0 ? l->movestogo : 30;
         double base = left / moves + inc * 0.75;
-        s->hard_limit = max_d(0.001, min_d(left * 0.5, base * 3) - overhead);
-        s->soft_limit = min_d(base, s->hard_limit);
+        /*
+         * A new iteration often takes as long as all before it, so none is
+         * started after half the target time; the hard limit caps an
+         * iteration that runs away (it was left / 2 and base * 3, which let
+         * the first move of a 3+2 game take 22 s, and Lichess abort it).
+         */
+        s->hard_limit = max_d(0.001, min_d(left * 0.15, base * 2) - overhead);
+        s->soft_limit = min_d(base * 0.5, s->hard_limit);
     }
 }
 
@@ -507,6 +514,22 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
     }
 
     /*
+     * Static evaluation, computed once when a pruning rule needs it. Pruning
+     * only happens outside the principal variation and out of check, and not
+     * in generation 0 (all evaluations 0).
+     */
+    bool pv_node = beta - alpha > 1;
+    bool prunable = !root && !pv_node && !in_check && !s->zero_weights;
+    int static_eval = 0;
+    bool have_eval = false;
+#define STATIC_EVAL() (have_eval ? static_eval : (have_eval = true, static_eval = evaluate(s, b, psq, ply)))
+
+    /* Reverse futility: far enough above beta that a shallow search will not fall below it. */
+    if ((s->options & SEARCH_RFP) && prunable && depth <= 6 && beta > -SCORE_MATE_BOUND && beta < SCORE_MATE_BOUND
+        && STATIC_EVAL() - 80 * depth >= beta)
+        return static_eval;
+
+    /*
      * Null-move pruning: if passing the move still leaves us at or above
      * beta in a shallower search, a real move will too. Only outside the
      * principal variation, not in check, and not with only king and pawns,
@@ -514,11 +537,10 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
      * either: with all weights 0 every position is "at beta", passing would
      * prune nearly everything, and gen 0 would play almost without search.
      */
-    bool pv_node = beta - alpha > 1;
     const Bitboard *own = b->pieces[b->side];
     if ((s->options & SEARCH_NMP) && !s->zero_weights && !root && !pv_node && !in_check && depth >= 3
         && (own[KNIGHT] | own[BISHOP] | own[ROOK] | own[QUEEN])
-        && evaluate(s, b, psq, ply) >= beta) {
+        && STATIC_EVAL() >= beta) {
         Board null;
         board_make_null(b, &null);
         int reduction = 2 + depth / 4;
@@ -573,6 +595,19 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
             continue;
         legal++;
 
+        /*
+         * Near the leaves, quiet moves that do not give check are skipped when
+         * the position is hopeless for them (futility) or when they come late
+         * in the ordering (late move pruning). The first move is always searched.
+         */
+        if (prunable && legal > 1 && depth <= 3 && (s->options & (SEARCH_FP | SEARCH_LMP)) && !move_is_capture(m)
+            && !move_is_promo(m) && alpha > -SCORE_MATE_BOUND && !board_in_check(&next)) {
+            if ((s->options & SEARCH_FP) && STATIC_EVAL() + 100 + 100 * depth <= alpha)
+                continue;
+            if ((s->options & SEARCH_LMP) && legal > 3 + 2 * depth * depth)
+                continue;
+        }
+
         int child_psq = psq + eval_psq_delta(s->weights, b, m);
         s->hashes[s->hash_count++] = next.hash;
         int score;
@@ -626,6 +661,7 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
         }
     }
 
+#undef STATIC_EVAL
     if (!legal)
         return in_check ? -SCORE_MATE + ply : draw_score(s, b);
 
@@ -709,7 +745,24 @@ SearchResult search_run(Search *s, const Game *game, const SearchLimits *limits,
     int max_depth = limits->depth > 0 && limits->depth < MAX_PLY ? limits->depth : MAX_PLY - 1;
     for (int depth = 1; depth <= max_depth; depth++) {
         s->seldepth = 0;
-        int score = negamax(s, root, root_psq, depth, -SCORE_INF, SCORE_INF, 0);
+        int score;
+        if ((s->options & SEARCH_ASP) && depth >= 5 && abs(result.score) < SCORE_MATE_BOUND) {
+            /* Aspiration window around the last score, widened until the score falls inside. */
+            int window = 30, alpha = result.score - window, beta = result.score + window;
+            for (;;) {
+                score = negamax(s, root, root_psq, depth, alpha, beta, 0);
+                if (s->stopped)
+                    break;
+                if (score <= alpha)
+                    alpha = window > 1000 ? -SCORE_INF : score - (window *= 2);
+                else if (score >= beta)
+                    beta = window > 1000 ? SCORE_INF : score + (window *= 2);
+                else
+                    break;
+            }
+        } else {
+            score = negamax(s, root, root_psq, depth, -SCORE_INF, SCORE_INF, 0);
+        }
         if (s->stopped)
             break;
 

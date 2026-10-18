@@ -47,7 +47,9 @@ void search_clear(Search *s);
  * random even with learned weights (otherwise only with all weights 0) –
  * costs depth, but self-play training learned more per game with it.
  */
-enum { SEARCH_PVS = 1, SEARCH_NMP = 2, SEARCH_LMR = 4, SEARCH_ALL = 7, SEARCH_EXACT_TIES = 8 };
+enum { SEARCH_PVS = 1, SEARCH_NMP = 2, SEARCH_LMR = 4, SEARCH_ALL = 7, SEARCH_EXACT_TIES = 8,
+       /* Milestone 20, measured one by one: reverse futility, futility and late move pruning, aspiration windows. */
+       SEARCH_RFP = 16, SEARCH_FP = 32, SEARCH_LMP = 64, SEARCH_ASP = 128 };
 
 /* What the engine uses unless told otherwise (UCI, self-play, matches, bench). */
 #define SEARCH_DEFAULT ((unsigned)SEARCH_ALL)
