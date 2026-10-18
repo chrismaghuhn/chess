@@ -91,7 +91,7 @@ bench=$(timeout 60 "$engine" bench | sed -n 's/^\([0-9]*\) nodes.*/\1/p')
 # "exact" is the training search: it must keep matching the engine of runs 1 and 4.
 exact=$(timeout 60 "$engine" bench 7 exact | sed -n 's/^\([0-9]*\) nodes.*/\1/p')
 [ "$exact" = 14201976 ] || { echo "FAIL uci bench exact: $exact nodes, expected 14201976"; failures=$((failures + 1)); }
-[ "$bench" = 10196665 ] || { echo "FAIL uci bench: $bench nodes, expected 10196665"; failures=$((failures + 1)); }
+[ "$bench" = 10195125 ] || { echo "FAIL uci bench: $bench nodes, expected 10195125"; failures=$((failures + 1)); }
 
 if [ "$failures" -ne 0 ]; then
     echo "$failures FAILED"

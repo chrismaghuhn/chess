@@ -101,7 +101,7 @@ bool search_parse_options(const char *text, unsigned *options) {
         unsigned flag;
     } names[] = { { "pvs", SEARCH_PVS }, { "nmp", SEARCH_NMP }, { "lmr", SEARCH_LMR },
                   { "all", SEARCH_ALL }, { "exact", SEARCH_EXACT_TIES }, { "rfp", SEARCH_RFP }, { "fp", SEARCH_FP },
-                  { "lmp", SEARCH_LMP }, { "asp", SEARCH_ASP } };
+                  { "lmp", SEARCH_LMP }, { "asp", SEARCH_ASP }, { "fifty", SEARCH_FIFTY } };
 
     *options = 0;
     if (strcmp(text, "none") == 0)
@@ -366,6 +366,9 @@ static inline int evaluate(Search *s, const Board *b, int psq, int ply) {
         int mine = popcount(b->pieces[s->root_side][KNIGHT]) - popcount(b->pieces[!s->root_side][KNIGHT]);
         score += (b->side == s->root_side ? 1 : -1) * s->knight_love * mine;
     }
+    /* The closer the 50-move rule, the closer to a draw: progress (pawn moves, captures) pays. */
+    if (s->options & SEARCH_FIFTY)
+        score = score * (200 - b->halfmove) / 200;
     return score;
 }
 
