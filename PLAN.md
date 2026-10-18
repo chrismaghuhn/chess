@@ -200,6 +200,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 12 | Langer Lauf (36 Generationen) | lineare Bewertung sättigt bei ~+100 gegen den Anker |
 | 13 | NNUE mit Glättung über ruhige Züge | Netz schlägt das beste lineare Modell bei gleichen Knoten (+77); noch 5,6× zu langsam |
 | 14 | Schnelle Netz-Bewertung (int16, inkrementell) | 1,3× statt 5,6× langsamer; **+74 Elo bei gleicher Zeit** gegen das beste lineare Modell |
+| 15 | Netz in der Trainingsschleife | hält das Niveau, nur +20 ± 15 in 20 Generationen (4357 CPU-s) – Ergebnis-Labels tragen kaum |
 
 ### Meilenstein 5: Tempo
 
@@ -574,6 +575,33 @@ soll am Netz-Anteil kaum etwas ändern; der lineare Teil bleibt frei. Kein Vorwi
   (linear-all ~2050–2100), noch nicht direkt gemessen.
 - Das Netz ist offline aus Partien der *linearen* Engine gelernt (M9-Daten). Nächster Schritt: das Netz in die
   Trainingsschleife (Selbstpartien mit Netz, Netz pro Generation mit `--smooth` nachtrainieren).
+
+### Meilenstein 15: das Netz in der Trainingsschleife
+
+`tools/net-generations.sh` (neu: `selfplay --net`, `nnue-train --init-net`): Das Netz spielt 2000 Partien mit
+1500 Knoten (`exact`, Zugsortierung und Auflösung mit `linear-all`), wird auf den letzten 4 Generationen 4 Epochen
+weitertrainiert (`--smooth 10`, lr 1e-3; die Validierung wählt die Epoche, ohne Verbesserung bleibt das Netz), dann
+Matches gegen den Vorgänger (400 Partien) und gegen `linear-all` nativ (1000 Partien, 5000 Knoten).
+Start: `h32-s10-e60` (M13). Lauf `runs/net1`, 20 Generationen, ~170 s Selbstpartien + ~60 s Training pro Generation.
+
+| Gen | CPU gesamt | Elo vs. `linear-all` (5000 Knoten) |
+|---|---|---|
+| 0 | 0 | +108 ± 21 |
+| 1 | 115 s | +71 ± 21 |
+| 5 | 914 s | +103 ± 21 |
+| 13 | 2764 s | +132 ± 22 |
+| 20 | 4357 s | +125 ± 22 |
+
+- Direkt: **Gen 20 gegen Gen 0 +20 ± 15** (2000 Partien, 5000 Knoten). Bei gleicher Zeit gegen `linear-all`
+  +60 ± 15 (Gen 0 in M14: +74 ± 15, aber mit den Gewichten aus Lauf 7 für die Zugsortierung – nicht direkt
+  vergleichbar).
+- In 8 von 20 Generationen fand das Training nichts Besseres (Netz unverändert); sonst sank die Validierungs-Loss
+  meist nur um 1–5 · 10⁻⁴. ~200k neue Stellungen pro Generation mit Ergebnis-Labels bewegen ein auf 14 Mio.
+  Stellungen trainiertes Netz kaum – und wenn, dann nicht immer zum Besseren (Gen 1: −37).
+- Folgerung: Die Schleife funktioniert technisch und hält das Niveau, lernt aber zu langsam. Der Engpass sind wieder
+  die Labels (ein Ergebnis pro Partie). Kandidaten: Suchbewertung als Label – in M10 schadete sie, weil der Lehrer
+  die schwache lineare Suche war; jetzt sucht das Netz selbst (die v2-Daten haben die Bewertung schon) –, mehr Knoten
+  in den Selbstpartien (besserer Lehrer), größere Fenster.
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 
