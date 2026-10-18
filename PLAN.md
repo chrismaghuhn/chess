@@ -201,6 +201,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 13 | NNUE mit Glättung über ruhige Züge | Netz schlägt das beste lineare Modell bei gleichen Knoten (+77); noch 5,6× zu langsam |
 | 14 | Schnelle Netz-Bewertung (int16, inkrementell) | 1,3× statt 5,6× langsamer; **+74 Elo bei gleicher Zeit** gegen das beste lineare Modell |
 | 15 | Netz in der Trainingsschleife | hält das Niveau, nur +20 ± 15 in 20 Generationen (4357 CPU-s) – Ergebnis-Labels tragen kaum |
+| 16 | Suchbewertung des Netzes als Label (λ = 0,5) | +66 in 20 Generationen; **+113 bei gleicher Zeit** gegen das beste lineare Modell |
 
 ### Meilenstein 5: Tempo
 
@@ -602,6 +603,25 @@ Start: `h32-s10-e60` (M13). Lauf `runs/net1`, 20 Generationen, ~170 s Selbstpart
   die Labels (ein Ergebnis pro Partie). Kandidaten: Suchbewertung als Label – in M10 schadete sie, weil der Lehrer
   die schwache lineare Suche war; jetzt sucht das Netz selbst (die v2-Daten haben die Bewertung schon) –, mehr Knoten
   in den Selbstpartien (besserer Lehrer), größere Fenster.
+
+### Meilenstein 16: die Suchbewertung des Netzes als Label
+
+`nnue-train --lambda X` (wie im linearen Tuner): Ziel = X · σ(Suchbewertung der Selbstpartie) + (1 − X) · Ergebnis,
+am Zuglimit nur die Bewertung; X = 0 ist exakt das alte Verhalten. Netz-Schleife wie M15, je 20 Generationen.
+
+| Lauf | Label | Gen 20 vs. Gen 0 (2000 Partien, 5000 Knoten) | Gen 20 vs. `linear-all` (5000 Knoten) | CPU |
+|---|---|---|---|---|
+| net1 | Ergebnis (λ = 0) | +20 ± 15 | +125 ± 22 | 4357 s |
+| **net2** | **λ = 0,5** | **+66 ± 15** | **+162 ± 23** | 4124 s |
+| net3 | nur Bewertung (λ = 1) | +30 ± 14 | +153 ± 22 | 4412 s |
+
+- **Bei gleicher Zeit (0,1 s/Zug): net2 Gen 20 gegen `linear-all` +113 ± 15** (net1 Gen 20: +60 ± 15).
+- Umkehr von M10: Dort schadete λ, weil der Lehrer die Suche mit schwacher linearer Bewertung war. Jetzt sucht das
+  Netz selbst, und seine Bewertungen sind ein brauchbares Label, das sich – anders als das Partieergebnis – von
+  Stellung zu Stellung unterscheidet. Nur Bewertung (λ = 1) ist schlechter als die Mischung: Das Ergebnis verankert
+  in der Wirklichkeit, die Bewertung liefert die Auflösung.
+- `net-generations.sh`: `LAMBDA` jetzt Standard 0,5 (Läufe ohne λ in `settings.txt` laufen mit 0 weiter).
+- Grob geschätzt ~2160–2210 auf der Stockfish-Skala (linear-all ~2050–2100 + 113), nicht direkt gemessen.
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 

@@ -1,0 +1,2 @@
+runs/nnue-offline/linear-all.bin + net runs/net3/nets/gen11.bin vs runs/nnue-offline/linear-all.bin + net runs/net3/nets/gen10.bin: +180 =43 -177, score 50.4%, Elo +3 +/- 32
+summary games=400 a_wins=180 draws=43 b_wins=177 score=0.5038 elo=2.6 elo_err=32.3 saturated=0 cpu_s=33.927 wall_s=3.259

@@ -177,7 +177,7 @@ case "$("$engine" data-info "$tmp/net-play.bin" 0)" in
 esac
 "$engine" data-info "$tmp/net-play.bin" 0 | grep -q " scored=0 " && fail "self-play with a network stored no scores"
 loop() {
-    NET0="$tmp/net1.bin" WEIGHTS="$tmp/tuned1.bin" GAMES=8 NODES=200 EPOCHS=2 MATCH_GAMES=2 MATCH_NODES=200 \
+    LAMBDA=0.5 NET0="$tmp/net1.bin" WEIGHTS="$tmp/tuned1.bin" GAMES=8 NODES=200 EPOCHS=2 MATCH_GAMES=2 MATCH_NODES=200 \
         ANCHOR_GAMES=2 ANCHOR_NODES=200 THREADS=4 ENGINE="$engine" TRAIN="$nnue_train" \
         timeout 300 sh tools/net-generations.sh "$tmp/net-gens" 2 2>&1
 }

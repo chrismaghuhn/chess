@@ -10,7 +10,8 @@
 #   GAMES [2000] self-play games per generation   NODES [1500] nodes per move in self-play
 #   WINDOW [4] generations of data the network trains on   EPOCHS [4] per generation
 #   SMOOTH [10] quiet-move penalty (nnue-train --smooth)   LR [0.001] network learning rate
-#   LAMBDA [0] weight of the self-play search score in the target (nnue-train --lambda)
+#   LAMBDA [0.5] weight of the self-play search score in the target (nnue-train --lambda); M16: 0.5 learns
+#                about 3x as much as results only. Runs started without it [0] continue without it.
 #   MATCH_GAMES [400] games against the previous generation, MATCH_NODES [1500]
 #   ANCHOR_GAMES [1000] games against WEIGHTS, ANCHOR_NODES [5000]
 #   SEARCH [exact] self-play search options; matches use the engine's default search
@@ -26,7 +27,7 @@ set -eu
 export LC_ALL=C
 
 if [ $# -ne 2 ]; then
-    sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
 fi
 run=$1
@@ -39,7 +40,10 @@ WINDOW=${WINDOW:-4}
 EPOCHS=${EPOCHS:-4}
 SMOOTH=${SMOOTH:-10}
 LR=${LR:-0.001}
-LAMBDA=${LAMBDA:-0}
+if [ -z "${LAMBDA+set}" ] && [ -f "$run/settings.txt" ] && ! grep -q 'lambda=' "$run/settings.txt"; then
+    LAMBDA=0 # the default before M16: such runs continue as they started
+fi
+LAMBDA=${LAMBDA:-0.5}
 MATCH_GAMES=${MATCH_GAMES:-400}
 MATCH_NODES=${MATCH_NODES:-1500}
 ANCHOR_GAMES=${ANCHOR_GAMES:-1000}
