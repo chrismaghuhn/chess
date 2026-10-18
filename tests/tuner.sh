@@ -208,6 +208,17 @@ awk "BEGIN { exit !($(kv "$l1" start_test) < 0.5 * $(kv "$l0" start_test)) }" 2>
     || fail "--lambda 1 targets do not match the network's own scores: $(kv "$l0" start_test) -> $(kv "$l1" start_test)"
 [ "$(kv "$l1" scored)" -gt 0 ] && [ "$(kv "$l0" scored)" = 0 ] || fail "scored count with --lambda"
 lam 1.5 >/dev/null && fail "--lambda above 1 accepted"
+# --val-files 1: only the last file validates, the other one trains on its validation games.
+split() { # prints "train val test" games
+    timeout 60 "$nnue_train" --data "$tmp/cache-data.bin" --data "$tmp/cache-more.bin" --resolve "$tmp/tuned1.bin" \
+        --hidden 4 --epochs 1 --threads 2 --out "$tmp/x.bin" "$@" 2>&1 >/dev/null \
+        | sed -n 's/^games train\/val\/test \([0-9]*\)\/\([0-9]*\)\/\([0-9]*\),.*/\1 \2 \3/p'
+}
+all=$(split)
+last=$(split --val-files 1)
+set -- $all $last
+[ "$5" -gt 0 ] && [ $(($5 * 2)) -eq "$2" ] && [ $(($4 + $5)) -eq $(($1 + $2)) ] && [ "$6" -eq "$3" ] \
+    || fail "--val-files 1 split: $all -> $last"
 
 # The quiet-move penalty makes the network part change less over a quiet move.
 rough=$(timeout 120 "$nnue_train" --data "$data" --resolve "$tmp/tuned1.bin" --out "$tmp/net-rough.bin" --hidden 16 \

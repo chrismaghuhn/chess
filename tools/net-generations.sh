@@ -10,6 +10,7 @@
 #   GAMES [2000] self-play games per generation   NODES [1500] nodes per move in self-play
 #   WINDOW [4] generations of data the network trains on   EPOCHS [4] per generation
 #   SMOOTH [10] quiet-move penalty (nnue-train --smooth)   LR [0.001] network learning rate
+#   VAL_FILES [0 = all] only the newest N generations of the window validate (nnue-train --val-files)
 #   LAMBDA [0.5] weight of the self-play search score in the target (nnue-train --lambda); M16: clearly
 #                better than results only. Runs started without it [0] continue without it.
 #   MATCH_GAMES [400] games against the previous generation, MATCH_NODES [1500]
@@ -47,6 +48,7 @@ if [ -z "${LAMBDA+set}" ] && [ -f "$run/settings.txt" ] && ! grep -q 'lambda=' "
     LAMBDA=0 # the default before M16: such runs continue as they started
 fi
 LAMBDA=${LAMBDA:-0.5}
+VAL_FILES=${VAL_FILES:-0}
 MATCH_GAMES=${MATCH_GAMES:-400}
 MATCH_NODES=${MATCH_NODES:-1500}
 ANCHOR_GAMES=${ANCHOR_GAMES:-1000}
@@ -57,6 +59,7 @@ ENGINE=${ENGINE:-build/release/engine}
 TRAIN=${TRAIN:-build/release/nnue-train}
 
 case "$WINDOW" in '' | *[!0-9]* | 0) echo "WINDOW must be a number of generations >= 1" >&2; exit 2 ;; esac
+case "$VAL_FILES" in '' | *[!0-9]*) echo "VAL_FILES must be a number" >&2; exit 2 ;; esac
 for f in "$NET0" "$WEIGHTS" "$ENGINE" "$TRAIN"; do
     [ -r "$f" ] || { echo "cannot read $f" >&2; exit 1; }
 done
@@ -76,6 +79,7 @@ settings="net0=$net0_sum weights=$weights_sum games=$GAMES nodes=$NODES window=$
 settings="$settings smooth=$SMOOTH lr=$LR match=$MATCH_GAMES/$MATCH_NODES anchor=$ANCHOR_GAMES/$ANCHOR_NODES"
 settings="$settings search=$SEARCH engine=$fingerprint"
 [ "$LAMBDA" = 0 ] || settings="$settings lambda=$LAMBDA" # only when used, so older runs keep resuming
+[ "$VAL_FILES" = 0 ] || settings="$settings val_files=$VAL_FILES"
 if [ -f "$run/settings.txt" ]; then
     if [ "$(cat "$run/settings.txt")" != "$settings" ]; then
         echo "$run was started with: $(cat "$run/settings.txt")" >&2
@@ -133,7 +137,7 @@ for g in $(seq 1 "$gens"); do
     train_log="$run/logs/train$g.txt"
     # shellcheck disable=SC2086
     step "$train_log" "$TRAIN" $data --resolve "$WEIGHTS" --init-net "$(net "$p")" --hidden "$hidden" \
-        --epochs "$EPOCHS" --lr "$LR" --smooth "$SMOOTH" --lambda "$LAMBDA" --threads "$THREADS" --out "$(net "$g")"
+        --epochs "$EPOCHS" --lr "$LR" --smooth "$SMOOTH" --lambda "$LAMBDA" --val-files "$VAL_FILES" --threads "$THREADS" --out "$(net "$g")"
 
     prev_log="$run/logs/match$g-vs-$p.txt"
     anchor_log="$run/logs/anchor$g.txt"
