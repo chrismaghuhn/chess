@@ -6,7 +6,7 @@
  *   nnue-train --out FILE --resolve WEIGHTS --data FILE [--data FILE ...]
  *              [--init-linear WEIGHTS] [--hidden H] [--epochs N] [--batch N] [--lr X]
  *              [--lr-linear X] [--wd X] [--train-games N] [--threads N] [--seed N] [--smooth X]
- *              [--init-net FILE]
+ *              [--init-net FILE] [--lambda X]
  *
  * Positions are resolved to quiet leaves with the --resolve linear weights,
  * as in the linear tuner. Split by the game number inside each file: % 10 == 0
@@ -17,6 +17,11 @@
  * pipeline, as the baseline. --init-net continues from a network (same
  * --hidden) instead; with validation picking the epoch, a network that does
  * not get better is written back unchanged.
+ *
+ * --lambda X (milestone 16) mixes the self-play search score into the
+ * target where the data has one, as the linear tuner does:
+ * X * sigmoid(score) + (1 - X) * result, the score alone at the ply limit
+ * (for X > 0; X = 0 is the plain result everywhere).
  *
  * --smooth X (milestone 13): game results label whole games, so they say
  * nothing about how the value changes from one move to the next - yet that
@@ -86,6 +91,7 @@ typedef struct {
     NetData *d;
     const uint8_t (*records)[DATA_RECORD_SIZE];
     const Weights *weights;
+    double lambda;
     size_t begin, end;
     uint16_t *input, *child_input;
     size_t length, capacity, child_length, child_capacity;
@@ -147,15 +153,19 @@ static void *resolve_worker(void *arg) {
             append(&job->child_input, &job->child_length, &job->child_capacity, in, n);
             job->child_counts[i - job->begin] = (uint8_t)n;
         }
-        float y = (float)pos.result / 2.0f;
-        job->d->target[i] = leaf.side == pos.board.side ? y : 1.0f - y;
+        double y = pos.result / 2.0;
+        if (pos.score_valid && job->lambda > 0) { /* 0: results only, exactly as before */
+            double expected = 1.0 / (1.0 + exp(-pos.score * SIGMOID_SCALE));
+            y = pos.end == END_PLY_LIMIT ? expected : job->lambda * expected + (1 - job->lambda) * y;
+        }
+        job->d->target[i] = (float)(leaf.side == pos.board.side ? y : 1.0 - y);
     }
     search_free(s);
     return NULL;
 }
 
 static bool load(NetData *d, char **paths, int path_count, long train_games, const Weights *resolve, int threads,
-                 bool children) {
+                 bool children, double lambda) {
     memset(d, 0, sizeof *d);
     uint8_t (*records)[DATA_RECORD_SIZE] = NULL;
     uint8_t *split = NULL;
@@ -242,7 +252,7 @@ static bool load(NetData *d, char **paths, int path_count, long train_games, con
     Job *jobs = xcalloc((size_t)threads, sizeof *jobs);
     pthread_t *ids = xcalloc((size_t)threads, sizeof *ids);
     for (int t = 0; t < threads; t++) {
-        jobs[t] = (Job){ .d = d, .records = (const uint8_t (*)[DATA_RECORD_SIZE])records, .weights = resolve,
+        jobs[t] = (Job){ .d = d, .records = (const uint8_t (*)[DATA_RECORD_SIZE])records, .weights = resolve, .lambda = lambda,
                          .begin = d->count * (size_t)t / (size_t)threads,
                          .end = d->count * (size_t)(t + 1) / (size_t)threads };
         pthread_create(&ids[t], NULL, resolve_worker, &jobs[t]);
@@ -488,7 +498,7 @@ int main(int argc, char **argv) {
     int path_count = 0;
     const char *out = NULL, *resolve_path = NULL, *init_path = NULL, *init_net_path = NULL;
     long hidden = 32, epochs = 30, batch = 16384, train_games = 0, threads = 1, seed = 1;
-    double lr = 1e-3, lr_linear = 0.05, wd = 0.01, smooth = 0;
+    double lr = 1e-3, lr_linear = 0.05, wd = 0.01, smooth = 0, lambda = 0;
 
     for (int i = 1; i < argc; i += 2) {
         const char *key = argv[i], *value = i + 1 < argc ? argv[i + 1] : NULL;
@@ -525,6 +535,8 @@ int main(int argc, char **argv) {
             ok = parse_double(value, &wd);
         else if (strcmp(key, "--smooth") == 0)
             ok = parse_double(value, &smooth);
+        else if (strcmp(key, "--lambda") == 0)
+            ok = parse_double(value, &lambda) && lambda <= 1;
         else
             ok = false;
         if (!ok) {
@@ -548,7 +560,7 @@ int main(int argc, char **argv) {
     }
 
     NetData d;
-    if (!load(&d, paths, path_count, train_games, &resolve, (int)threads, hidden > 0))
+    if (!load(&d, paths, path_count, train_games, &resolve, (int)threads, hidden > 0, lambda))
         return 1;
     fprintf(stderr, "games train/val/test %zu/%zu/%zu, positions %zu/%zu/%zu\n", d.games[TRAIN],
             d.games[VALIDATION], d.games[TEST], d.in_split[TRAIN], d.in_split[VALIDATION], d.in_split[TEST]);
@@ -683,8 +695,8 @@ int main(int argc, char **argv) {
     }
     double cpu = clock_seconds(CLOCK_PROCESS_CPUTIME_ID) - cpu0, wall = clock_seconds(CLOCK_MONOTONIC) - wall0;
     printf("summary hidden=%ld train_games=%zu train_positions=%zu start_val=%.6f val=%.6f start_test=%.6f test=%.6f"
-           " best_epoch=%.1f smooth=%g quiet_change=%.1f cpu_s=%.1f wall_s=%.1f\n",
-           hidden, d.games[TRAIN], train_n, start_val, best_val, start_test, test, best_epoch, smooth, test_change, cpu,
+           " best_epoch=%.1f smooth=%g lambda=%g quiet_change=%.1f cpu_s=%.1f wall_s=%.1f\n",
+           hidden, d.games[TRAIN], train_n, start_val, best_val, start_test, test, best_epoch, smooth, lambda, test_change, cpu,
            wall);
     return 0;
 }

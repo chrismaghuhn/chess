@@ -187,6 +187,13 @@ loop >/dev/null || fail "network loop"
 [ "$(loop | grep -c '^  ')" -eq 0 ] || fail "network loop resume redid steps"
 "$nnue_train" --data "$data" --resolve "$tmp/tuned1.bin" --init-net "$tmp/net1.bin" --hidden 8 --out "$tmp/x.bin" \
     2>/dev/null && fail "--init-net with another --hidden accepted"
+# Search scores as labels change the start loss on scored data (game 0 is in the test part); lambda above 1 is refused.
+lam() {
+    timeout 60 "$nnue_train" --data "$tmp/net-play.bin" --resolve "$tmp/tuned1.bin" --init-net "$tmp/net1.bin" \
+        --hidden 16 --epochs 1 --threads 2 --out "$tmp/net-lambda.bin" --lambda "$1" 2>/dev/null
+}
+[ "$(kv "$(lam 0)" start_test)" != "$(kv "$(lam 1)" start_test)" ] || fail "--lambda does not change the targets"
+lam 1.5 >/dev/null && fail "--lambda above 1 accepted"
 
 # The quiet-move penalty makes the network part change less over a quiet move.
 rough=$(timeout 120 "$nnue_train" --data "$data" --resolve "$tmp/tuned1.bin" --out "$tmp/net-rough.bin" --hidden 16 \

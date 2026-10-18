@@ -10,6 +10,7 @@
 #   GAMES [2000] self-play games per generation   NODES [1500] nodes per move in self-play
 #   WINDOW [4] generations of data the network trains on   EPOCHS [4] per generation
 #   SMOOTH [10] quiet-move penalty (nnue-train --smooth)   LR [0.001] network learning rate
+#   LAMBDA [0] weight of the self-play search score in the target (nnue-train --lambda)
 #   MATCH_GAMES [400] games against the previous generation, MATCH_NODES [1500]
 #   ANCHOR_GAMES [1000] games against WEIGHTS, ANCHOR_NODES [5000]
 #   SEARCH [exact] self-play search options; matches use the engine's default search
@@ -25,7 +26,7 @@ set -eu
 export LC_ALL=C
 
 if [ $# -ne 2 ]; then
-    sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
 fi
 run=$1
@@ -38,6 +39,7 @@ WINDOW=${WINDOW:-4}
 EPOCHS=${EPOCHS:-4}
 SMOOTH=${SMOOTH:-10}
 LR=${LR:-0.001}
+LAMBDA=${LAMBDA:-0}
 MATCH_GAMES=${MATCH_GAMES:-400}
 MATCH_NODES=${MATCH_NODES:-1500}
 ANCHOR_GAMES=${ANCHOR_GAMES:-1000}
@@ -57,6 +59,7 @@ weights_sum=$(cksum <"$WEIGHTS" | cut -d' ' -f1)
 settings="net0=$net0_sum weights=$weights_sum games=$GAMES nodes=$NODES window=$WINDOW epochs=$EPOCHS"
 settings="$settings smooth=$SMOOTH lr=$LR match=$MATCH_GAMES/$MATCH_NODES anchor=$ANCHOR_GAMES/$ANCHOR_NODES"
 settings="$settings search=$SEARCH engine=$fingerprint"
+[ "$LAMBDA" = 0 ] || settings="$settings lambda=$LAMBDA" # only when used, so older runs keep resuming
 if [ -f "$run/settings.txt" ]; then
     if [ "$(cat "$run/settings.txt")" != "$settings" ]; then
         echo "$run was started with: $(cat "$run/settings.txt")" >&2
@@ -114,7 +117,7 @@ for g in $(seq 1 "$gens"); do
     train_log="$run/logs/train$g.txt"
     # shellcheck disable=SC2086
     step "$train_log" "$TRAIN" $data --resolve "$WEIGHTS" --init-net "$(net "$p")" --hidden "$hidden" \
-        --epochs "$EPOCHS" --lr "$LR" --smooth "$SMOOTH" --threads "$THREADS" --out "$(net "$g")"
+        --epochs "$EPOCHS" --lr "$LR" --smooth "$SMOOTH" --lambda "$LAMBDA" --threads "$THREADS" --out "$(net "$g")"
 
     prev_log="$run/logs/match$g-vs-$p.txt"
     step "$prev_log" "$ENGINE" match --a "$WEIGHTS" --a-net "$(net "$g")" --b "$WEIGHTS" --b-net "$(net "$p")" \
