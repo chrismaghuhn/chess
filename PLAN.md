@@ -203,6 +203,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 15 | Netz in der Trainingsschleife | hält das Niveau, nur +20 ± 15 in 20 Generationen (4357 CPU-s) – Ergebnis-Labels tragen kaum |
 | 16 | Suchbewertung des Netzes als Label (λ = 0,5) | +66 in 20 Generationen (Ergebnis allein: +20); **+113 bei gleicher Zeit** gegen das beste lineare Modell |
 | 17 | Gate: nur neueste Generation validiert, 2 Epochen | kein messbarer Unterschied (net4 vs. net2 direkt −0 ± 14) |
+| 18 | Besserer Lehrer (3000 Knoten) und größeres Netz (H = 64) | beides kein Gewinn pro CPU (−15 ± 15 / −10 ± 14 bei gleicher Zeit) |
 
 ### Meilenstein 5: Tempo
 
@@ -656,6 +657,28 @@ in der Schleife `VAL_FILES`. Lauf **net4** = net2 mit `VAL_FILES=1` und `EPOCHS=
 - Standard bleibt `VAL_FILES=0`, `EPOCHS=4`. Die Schleife lernt pro Generation wenig, aber nicht wegen des Gates;
   Kandidaten für mehr Lernen pro CPU: bessere Labels (mehr Knoten in den Selbstpartien → besserer Lehrer für λ),
   mehr Kapazität (H = 64), Leaf-Cache auch im Netz-Trainer (spart die wiederholte Auflösung des Fensters).
+
+### Meilenstein 18: besserer Lehrer, größeres Netz – beides kein Gewinn
+
+**Mehr Knoten in den Selbstpartien** (Lauf net5 = net2 mit `NODES=3000`, 20 Generationen, 9259 CPU-s statt 4124):
+Die Anker-Kurve sah gut aus (Gen 20: +198 gegen `linear-all`, Mittel Gen 11–20: 167 statt 144), die direkten
+Vergleiche nicht:
+
+| direkt, 2000 Partien, 5000 Knoten | Elo |
+|---|---|
+| net5 Gen 9 (3988 CPU-s) vs. net2 Gen 20 (4124 CPU-s) – gleiche CPU | −15 ± 15 |
+| net5 Gen 20 (9259 CPU-s) vs. net2 Gen 20 | +9 ± 14 |
+
+- Der tiefere Lehrer lohnt sich nicht: bei gleicher CPU eher schlechter, mit 2,2× CPU nicht messbar besser.
+- Lehre: Die Anker-Elo gegen `linear-all` überschätzt Unterschiede zwischen Netzen; Entscheidungen nur nach direkten
+  Matches.
+
+**Größeres Netz** (H = 64, `--smooth 10`, 60 Epochen, M9-Daten, 18326 CPU-s): Test-Loss 0,1181 statt 0,1184 (H = 32).
+Gegen H = 32: +7 ± 14 bei 5000 Knoten, **−10 ± 14 bei 0,1 s/Zug**. Mehr Kapazität bringt bei diesen Daten nichts; die
+Schleife mit H = 64 (geplant als net6) habe ich deshalb nicht gestartet.
+
+- Stand: Die stärkste Version bleibt net2 Gen 20 (λ = 0,5, H = 32, 1500 Knoten). Weder Gate, Lehrertiefe noch
+  Kapazität waren der Engpass; offen bleibt, was die Netz-Schleife schneller lernen lässt.
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 
