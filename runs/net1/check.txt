@@ -1,0 +1,4 @@
+== gen20 vs gen0, 5000 nodes
+runs/nnue-offline/linear-all.bin + net runs/net1/nets/gen20.bin vs runs/nnue-offline/linear-all.bin + net runs/net1/nets/gen0.bin: +969 =177 -854, score 52.9%, Elo +20 +/- 15
+== gen20 vs linear-all, 0.1 s/move
+runs/nnue-offline/linear-all.bin + net runs/net1/nets/gen20.bin vs runs/nnue-offline/linear-all.bin: +1078 =186 -736, score 58.6%, Elo +60 +/- 15

@@ -1,0 +1,2 @@
+runs/nnue-offline/linear-all.bin + net runs/net2/nets/gen20.bin vs runs/nnue-offline/linear-all.bin + net runs/net2/nets/gen0.bin: +1099 =175 -726, score 59.3%, Elo +66 +/- 15
+runs/nnue-offline/linear-all.bin + net runs/net2/nets/gen20.bin vs runs/nnue-offline/linear-all.bin: +1214 =199 -587, score 65.7%, Elo +113 +/- 15

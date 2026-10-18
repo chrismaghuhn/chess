@@ -16,6 +16,7 @@
 #include "eval.h"
 #include "game.h"
 #include "movegen.h"
+#include "nnue.h"
 #include "rng.h"
 #include "search.h"
 
@@ -48,6 +49,7 @@ typedef struct {
     uint64_t seed;
     int hash_mb;      /* per thread */
     const char *weights_path;
+    const char *net_path; /* evaluate with this network (weights still order moves) */
     unsigned options; /* search options */
     bool resign;      /* calibrated resignation (see above) */
     const char *out_path;
@@ -71,6 +73,8 @@ typedef struct {
 typedef struct {
     Config cfg;
     Weights weights;
+    Network net;
+    bool has_net;
     FILE *out;
     bool write_failed;
 
@@ -250,6 +254,10 @@ static void *worker(void *arg) {
     }
     search_set_weights(s, &sp->weights);
     search_set_options(s, sp->cfg.options);
+    if (sp->has_net && !search_set_network(s, &sp->net)) {
+        fprintf(stderr, "network %s cannot be used (weights too large or out of memory)\n", sp->cfg.net_path);
+        exit(1);
+    }
 
     for (;;) {
         pthread_mutex_lock(&sp->lock);
@@ -263,7 +271,7 @@ static void *worker(void *arg) {
         if (id >= sp->cfg.games)
             break;
 
-        Played *p = play_game(&sp->cfg, s, id, threshold, !sp->zero_weights);
+        Played *p = play_game(&sp->cfg, s, id, threshold, !sp->zero_weights || sp->has_net);
         if (calibrating) {
             pthread_mutex_lock(&sp->lock);
             calibrate(sp, p);
@@ -279,7 +287,7 @@ static void usage(void) {
     fprintf(stderr,
             "usage: engine selfplay --out FILE [--games N] [--nodes N] [--threads N]\n"
             "                       [--weights FILE] [--search OPTS] [--seed N] [--random-plies 0..%d]\n"
-            "                       [--max-plies N] [--hash MB] [--resign on|off]\n",
+            "                       [--max-plies N] [--hash MB] [--resign on|off] [--net FILE]\n",
             MAX_RANDOM_PLIES);
 }
 
@@ -317,6 +325,8 @@ static bool parse_args(int argc, char **argv, Config *c) {
             c->out_path = value;
         else if (strcmp(key, "--weights") == 0)
             c->weights_path = value;
+        else if (strcmp(key, "--net") == 0)
+            c->net_path = value;
         else if (strcmp(key, "--resign") == 0)
             ok = (strcmp(value, "on") == 0 && (c->resign = true)) || (strcmp(value, "off") == 0 && !(c->resign = false));
         else if (strcmp(key, "--search") == 0)
@@ -376,9 +386,19 @@ int selfplay_main(int argc, char **argv) {
             return 1;
         }
     }
+    if (c.net_path) {
+        char err[256];
+        if (!(sp->has_net = nnue_load(&sp->net, c.net_path, err, sizeof err))) {
+            fprintf(stderr, "%s\n", err);
+            free(sp);
+            return 1;
+        }
+    }
     sp->out = data_create(c.out_path);
     if (!sp->out) {
         fprintf(stderr, "cannot create %s\n", c.out_path);
+        if (sp->has_net)
+            nnue_free(&sp->net);
         free(sp);
         return 1;
     }
@@ -448,6 +468,8 @@ int selfplay_main(int argc, char **argv) {
     pthread_cond_destroy(&sp->calibrated);
     free(threads);
     free(sp->done);
+    if (sp->has_net)
+        nnue_free(&sp->net);
     free(sp);
     return ok ? 0 : 1;
 }

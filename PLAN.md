@@ -200,6 +200,8 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 12 | Langer Lauf (36 Generationen) | lineare Bewertung sättigt bei ~+100 gegen den Anker |
 | 13 | NNUE mit Glättung über ruhige Züge | Netz schlägt das beste lineare Modell bei gleichen Knoten (+77); noch 5,6× zu langsam |
 | 14 | Schnelle Netz-Bewertung (int16, inkrementell) | 1,3× statt 5,6× langsamer; **+74 Elo bei gleicher Zeit** gegen das beste lineare Modell |
+| 15 | Netz in der Trainingsschleife | hält das Niveau, nur +20 ± 15 in 20 Generationen (4357 CPU-s) – Ergebnis-Labels tragen kaum |
+| 16 | Suchbewertung des Netzes als Label (λ = 0,5) | +66 in 20 Generationen (Ergebnis allein: +20); **+113 bei gleicher Zeit** gegen das beste lineare Modell |
 
 ### Meilenstein 5: Tempo
 
@@ -574,6 +576,64 @@ soll am Netz-Anteil kaum etwas ändern; der lineare Teil bleibt frei. Kein Vorwi
   (linear-all ~2050–2100), noch nicht direkt gemessen.
 - Das Netz ist offline aus Partien der *linearen* Engine gelernt (M9-Daten). Nächster Schritt: das Netz in die
   Trainingsschleife (Selbstpartien mit Netz, Netz pro Generation mit `--smooth` nachtrainieren).
+
+### Meilenstein 15: das Netz in der Trainingsschleife
+
+`tools/net-generations.sh` (neu: `selfplay --net`, `nnue-train --init-net`): Das Netz spielt 2000 Partien mit
+1500 Knoten (`exact`, Zugsortierung und Auflösung mit `linear-all`), wird auf den letzten 4 Generationen 4 Epochen
+weitertrainiert (`--smooth 10`, lr 1e-3; die Validierung wählt die Epoche, ohne Verbesserung bleibt das Netz), dann
+Matches gegen den Vorgänger (400 Partien) und gegen `linear-all` nativ (1000 Partien, 5000 Knoten).
+Start: `h32-s10-e60` (M13). Lauf `runs/net1`, 20 Generationen, ~170 s Selbstpartien + ~60 s Training pro Generation.
+
+| Gen | CPU gesamt | Elo vs. `linear-all` (5000 Knoten) |
+|---|---|---|
+| 0 | 0 | +108 ± 21 |
+| 1 | 115 s | +71 ± 21 |
+| 5 | 914 s | +103 ± 21 |
+| 13 | 2764 s | +132 ± 22 |
+| 20 | 4357 s | +125 ± 22 |
+
+- Direkt: **Gen 20 gegen Gen 0 +20 ± 15** (2000 Partien, 5000 Knoten). Bei gleicher Zeit gegen `linear-all`
+  +60 ± 15 (Gen 0 in M14: +74 ± 15, aber mit den Gewichten aus Lauf 7 für die Zugsortierung – nicht direkt
+  vergleichbar).
+- In 8 von 20 Generationen fand das Training nichts Besseres (Netz unverändert); sonst sank die Validierungs-Loss
+  meist nur um 1–5 · 10⁻⁴. ~200k neue Stellungen pro Generation mit Ergebnis-Labels bewegen ein auf 14 Mio.
+  Stellungen trainiertes Netz kaum – und wenn, dann nicht immer zum Besseren (Gen 1: −37).
+- Folgerung: Die Schleife funktioniert technisch und hält das Niveau, lernt aber zu langsam. Der Engpass sind wieder
+  die Labels (ein Ergebnis pro Partie). Kandidaten: Suchbewertung als Label – in M10 schadete sie, weil der Lehrer
+  die schwache lineare Suche war; jetzt sucht das Netz selbst (die v2-Daten haben die Bewertung schon) –, mehr Knoten
+  in den Selbstpartien (besserer Lehrer), größere Fenster.
+
+### Meilenstein 16: die Suchbewertung des Netzes als Label
+
+`nnue-train --lambda X` (wie im linearen Tuner): Ziel = X · σ(Suchbewertung der Selbstpartie) + (1 − X) · Ergebnis,
+am Zuglimit nur die Bewertung; X = 0 ist exakt das alte Verhalten. Netz-Schleife wie M15, je 20 Generationen.
+
+| Lauf | Label | Gen 20 vs. Gen 0 (2000 Partien, 5000 Knoten) | Gen 20 vs. `linear-all` (5000 Knoten) | CPU |
+|---|---|---|---|---|
+| net1 | Ergebnis (λ = 0) | +20 ± 15 | +125 ± 22 | 4357 s |
+| **net2** | **λ = 0,5** | **+66 ± 15** | **+162 ± 23** | 4124 s |
+| net3 | nur Bewertung (λ = 1) | +30 ± 14 | +153 ± 22 | 4412 s |
+
+- **Bei gleicher Zeit (0,1 s/Zug): net2 Gen 20 gegen `linear-all` +113 ± 15** (net1 Gen 20: +60 ± 15; beide mit
+  `linear-all` für die Zugsortierung, also vergleichbar – anders als die +74 aus M14).
+- Robuster als die Endpunkte, weil die Anker-Elo von Generation zu Generation um ±20–40 springt (Gen 20 ist der
+  Höchstwert von net2): **Mittel der Anker-Elo über Gen 11–20: net1 114, net2 144, net3 136** (Gen 0: 108).
+  Direkt: **net2 Gen 20 gegen net3 Gen 20 +29 ± 15**.
+- Folgerung: λ = 0,5 ist klar besser als nur Ergebnisse (~+30 im Mittel, +46 ± 21 an den Endpunkten). Gegenüber
+  λ = 1 ist der Vorsprung kleiner und unsicher (Mittel +8, direkt +29 ± 15). Je Einstellung gab es nur einen Lauf mit
+  denselben Seeds (gepaart, keine Wiederholungen) – die Streuung zwischen Läufen ist ungemessen.
+- Vermutung (nicht getestet): In M10 schadete λ, weil der Lehrer die Suche mit schwacher linearer Bewertung war;
+  jetzt sucht das Netz selbst, und seine Bewertung ist ein Label, das sich – anders als das Partieergebnis – von
+  Stellung zu Stellung unterscheidet. M10 unterschied sich aber auch in Modell, Start und Daten.
+- `net-generations.sh`: `LAMBDA` jetzt Standard 0,5 (Läufe ohne λ in `settings.txt` laufen mit 0 weiter).
+- Stockfish-Skala: grob 2180 ± 110 (1900 ± 100 aus M8, +168 ± 36 aus M9, +113 ± 15), eher optimistisch, weil
+  Fortschritte gegen die eigene Linie gegen fremde Engines meist kleiner ausfallen; nicht direkt gemessen.
+- Review: Das Gate bevorzugt „unverändert“ (8 von 20 Generationen): Drei Viertel der Validierungspartien im Fenster
+  haben das Startnetz schon ausgewählt, und ältere Fensterpartien wurden bis zu 16-mal trainiert; ein Versuch zeigt
+  Überanpassung ans Fenster ab Epoche 0,5. Kandidaten: nur auf der neuesten Generation validieren, weniger Epochen.
+- Unveränderte Netze werden jetzt nicht mehr neu gemessen (vorher zeigten X-gegen-X-Matches Rauschen von bis zu
+  ±24 Elo in `elo_vs_prev`).
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 
