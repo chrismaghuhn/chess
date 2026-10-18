@@ -9,7 +9,9 @@
 #include <string.h>
 #include <time.h>
 
+#include "attacks.h"
 #include "eval.h"
+#include <math.h>
 #include "movegen.h"
 #include "nnue.h"
 #include "rng.h"
@@ -101,7 +103,8 @@ bool search_parse_options(const char *text, unsigned *options) {
         unsigned flag;
     } names[] = { { "pvs", SEARCH_PVS }, { "nmp", SEARCH_NMP }, { "lmr", SEARCH_LMR },
                   { "all", SEARCH_ALL }, { "exact", SEARCH_EXACT_TIES }, { "rfp", SEARCH_RFP }, { "fp", SEARCH_FP },
-                  { "lmp", SEARCH_LMP }, { "asp", SEARCH_ASP }, { "fifty", SEARCH_FIFTY } };
+                  { "lmp", SEARCH_LMP }, { "asp", SEARCH_ASP }, { "fifty", SEARCH_FIFTY },
+                  { "lmrlog", SEARCH_LMRLOG }, { "hist", SEARCH_HIST }, { "see", SEARCH_SEE } };
 
     *options = 0;
     if (strcmp(text, "none") == 0)
@@ -325,6 +328,67 @@ static void reward_history(int *entry, int depth) {
     *entry += bonus - *entry * bonus / HISTORY_MAX; /* stays within HISTORY_MAX */
 }
 
+/* The opposite: a quiet move tried before the one that cut off loses standing. */
+static void punish_history(int *entry, int depth) {
+    int malus = depth * depth < HISTORY_MAX ? depth * depth : HISTORY_MAX;
+    *entry -= malus + *entry * malus / HISTORY_MAX; /* stays within -HISTORY_MAX */
+}
+
+/* Logarithmic late move reduction by depth and move number (SEARCH_LMRLOG). */
+static int lmr_table[64][64];
+
+static int lmr_reduction(int depth, int moves) {
+    if (!lmr_table[63][63])
+        for (int d = 1; d < 64; d++)
+            for (int n = 1; n < 64; n++)
+                lmr_table[d][n] = (int)(0.75 + log(d) * log(n) / 2.25);
+    return lmr_table[depth < 63 ? depth : 63][moves < 63 ? moves : 63];
+}
+
+static Bitboard attackers_to(const Board *b, int sq, Bitboard occupied) {
+    const Bitboard (*p)[6] = b->pieces;
+    Bitboard diagonal = p[WHITE][BISHOP] | p[BLACK][BISHOP] | p[WHITE][QUEEN] | p[BLACK][QUEEN];
+    Bitboard straight = p[WHITE][ROOK] | p[BLACK][ROOK] | p[WHITE][QUEEN] | p[BLACK][QUEEN];
+    return ((pawn_attacks[BLACK][sq] & p[WHITE][PAWN]) | (pawn_attacks[WHITE][sq] & p[BLACK][PAWN])
+            | (knight_attacks[sq] & (p[WHITE][KNIGHT] | p[BLACK][KNIGHT]))
+            | (king_attacks[sq] & (p[WHITE][KING] | p[BLACK][KING])) | (bishop_attacks(sq, occupied) & diagonal)
+            | (rook_attacks(sq, occupied) & straight))
+         & occupied;
+}
+
+int search_see(const Search *s, const Board *b, Move m) {
+    if (!move_is_capture(m) || move_is_promo(m) || move_flags(m) == MF_EP_CAPTURE)
+        return 0;
+    int value[6];
+    memcpy(value, s->piece_value, sizeof value);
+    value[KING] = 30000; /* capturing the king ends every exchange */
+    int from = move_from(m), to = move_to(m);
+    int gain[33], depth = 0;
+    Bitboard occupied = b->all, from_bb = (Bitboard)1 << from;
+    int piece = piece_type(b->squares[from]);
+    int side = b->side;
+    gain[0] = value[piece_type(b->squares[to])];
+    Bitboard attackers = attackers_to(b, to, occupied);
+    while (from_bb && depth < 32) {
+        depth++;
+        gain[depth] = value[piece] - gain[depth - 1]; /* if the piece just moved there is taken */
+        occupied ^= from_bb;
+        attackers = attackers_to(b, to, occupied); /* uncovers pieces behind */
+        side ^= 1;
+        from_bb = 0;
+        for (int type = PAWN; type <= KING && !from_bb; type++) {
+            Bitboard bb = attackers & b->pieces[side][type];
+            if (bb) {
+                from_bb = bb & -bb;
+                piece = type;
+            }
+        }
+    }
+    while (--depth)
+        gain[depth - 1] = -(-gain[depth - 1] > gain[depth] ? -gain[depth - 1] : gain[depth]);
+    return gain[0];
+}
+
 /* Every node registers its board, so the network can update its accumulators lazily along the path. */
 static inline void enter(Search *s, const Board *b, int ply) {
     if (s->net) {
@@ -421,6 +485,9 @@ static int qsearch(Search *s, const Board *b, int psq, int alpha, int beta, int 
 
     for (int i = 0; i < list.count; i++) {
         Move m = pick_move(&list, scores, i);
+        /* Captures that lose material in the exchange are not worth a look (SEARCH_SEE). */
+        if ((s->options & SEARCH_SEE) && !in_check && !s->zero_weights && search_see(s, b, m) < 0)
+            continue;
         Board next;
         if (!board_make_move_fast(b, m, &next, pinned, in_check))
             continue;
@@ -590,6 +657,8 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
     bool random_ties = root && s->limits->seed && exact_ties;
     Move ties[MAX_MOVES];
     int tie_count = 0;
+    Move quiets[MAX_MOVES]; /* quiet moves searched so far (SEARCH_HIST) */
+    int quiet_count = 0;
 
     for (int i = 0; i < list.count; i++) {
         Move m = pick_move(&list, scores, i);
@@ -628,6 +697,10 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
                 && !move_is_capture(m) && !move_is_promo(m) && m != s->killers[ply][0]
                 && m != s->killers[ply][1] && !board_in_check(&next))
                 reduction = legal > 8 && depth >= 5 ? 2 : 1;
+            if (reduction && (s->options & SEARCH_LMRLOG)) {
+                reduction = lmr_reduction(depth, legal) - pv_node;
+                reduction = reduction < 1 ? 1 : reduction > depth - 2 ? depth - 2 : reduction;
+            }
             score = -negamax(s, &next, child_psq, depth - 1 - reduction, -alpha - 1, -alpha, ply + 1);
             if (score > alpha && reduction && !s->stopped)
                 score = -negamax(s, &next, child_psq, depth - 1, -alpha - 1, -alpha, ply + 1);
@@ -637,6 +710,9 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
         s->hash_count--;
         if (s->stopped)
             return 0;
+        bool cut = score > alpha && score >= beta;
+        if (!cut && !move_is_capture(m) && !move_is_promo(m))
+            quiets[quiet_count++] = m;
 
         if (random_ties && score == best)
             ties[tie_count++] = m;
@@ -654,6 +730,9 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
 
                 if (score >= beta) {
                     reward_history(&s->history[b->side][move_from(m)][move_to(m)], depth);
+                    if ((s->options & SEARCH_HIST) && !move_is_capture(m) && !move_is_promo(m))
+                        for (int q = 0; q < quiet_count; q++)
+                            punish_history(&s->history[b->side][move_from(quiets[q])][move_to(quiets[q])], depth);
                     if (!move_is_capture(m) && !move_is_promo(m) && s->killers[ply][0] != m) {
                         s->killers[ply][1] = s->killers[ply][0];
                         s->killers[ply][0] = m;

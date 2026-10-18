@@ -51,7 +51,10 @@ enum { SEARCH_PVS = 1, SEARCH_NMP = 2, SEARCH_LMR = 4, SEARCH_ALL = 7, SEARCH_EX
        /* Milestone 20, measured one by one: reverse futility, futility and late move pruning, aspiration windows. */
        SEARCH_RFP = 16, SEARCH_FP = 32, SEARCH_LMP = 64, SEARCH_ASP = 128,
        /* Scale evaluations toward a draw as the 50-move counter rises (rewards progress). */
-       SEARCH_FIFTY = 256 };
+       SEARCH_FIFTY = 256,
+       /* Milestone 21: logarithmic late move reductions, history malus, SEE pruning in quiescence. */
+       SEARCH_LMRLOG = 512, SEARCH_HIST = 1024, SEARCH_SEE = 2048,
+       SEARCH_EVERYTHING = 4095 & ~SEARCH_EXACT_TIES };
 
 /* What the engine uses unless told otherwise (UCI, self-play, matches, bench). */
 /* Milestone 20: rfp + asp + fp gave +69 +/- 14 Elo at equal time; lmp (-17) is left out. */
@@ -64,6 +67,14 @@ void search_set_options(Search *s, unsigned options);
  * e.g. "all,exact"; false if empty, unknown, or NMP/LMR without PVS.
  */
 bool search_parse_options(const char *text, unsigned *options);
+
+/*
+ * Static exchange evaluation of a capture with the learned piece values:
+ * the material balance after both sides capture on the target square in
+ * order of their cheapest piece, each free to stop. Promotions and en
+ * passant count as 0 (never pruned).
+ */
+int search_see(const Search *s, const Board *b, Move m);
 
 /*
  * Evaluate with this network instead of the linear weights (experiment); the
