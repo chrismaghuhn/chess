@@ -1,0 +1,1 @@
+net0=2341251041 weights=2406904491 games=2000 nodes=1500 window=4 epochs=2 smooth=10 lr=0.001 match=400/1500 anchor=1000/5000 search=exact engine=14201976 lambda=0.5 val_files=1

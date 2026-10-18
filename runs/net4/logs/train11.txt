@@ -1,0 +1,1 @@
+summary hidden=32 train_games=7000 train_positions=697173 start_val=0.034144 val=0.034144 start_test=0.032939 test=0.032939 best_epoch=0.0 smooth=10 lambda=0.5 scored=796757 quiet_change=4.8 cpu_s=46.7 wall_s=8.6

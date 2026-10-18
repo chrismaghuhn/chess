@@ -202,6 +202,7 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 14 | Schnelle Netz-Bewertung (int16, inkrementell) | 1,3× statt 5,6× langsamer; **+74 Elo bei gleicher Zeit** gegen das beste lineare Modell |
 | 15 | Netz in der Trainingsschleife | hält das Niveau, nur +20 ± 15 in 20 Generationen (4357 CPU-s) – Ergebnis-Labels tragen kaum |
 | 16 | Suchbewertung des Netzes als Label (λ = 0,5) | +66 in 20 Generationen (Ergebnis allein: +20); **+113 bei gleicher Zeit** gegen das beste lineare Modell |
+| 17 | Gate: nur neueste Generation validiert, 2 Epochen | kein messbarer Unterschied (net4 vs. net2 direkt −0 ± 14) |
 
 ### Meilenstein 5: Tempo
 
@@ -634,6 +635,27 @@ am Zuglimit nur die Bewertung; X = 0 ist exakt das alte Verhalten. Netz-Schleife
   Überanpassung ans Fenster ab Epoche 0,5. Kandidaten: nur auf der neuesten Generation validieren, weniger Epochen.
 - Unveränderte Netze werden jetzt nicht mehr neu gemessen (vorher zeigten X-gegen-X-Matches Rauschen von bis zu
   ±24 Elo in `elo_vs_prev`).
+
+### Meilenstein 17: Gate nur auf der neuesten Generation – kein Effekt
+
+Aus dem Review von M15/16: Drei Viertel der Validierungspartien im Fenster hatten das Startnetz schon ausgewählt.
+`nnue-train --val-files N`: nur die letzten N Dateien validieren, ältere trainieren auf ihren Validierungspartien;
+in der Schleife `VAL_FILES`. Lauf **net4** = net2 mit `VAL_FILES=1` und `EPOCHS=2` (beides auf einmal).
+
+| | net2 (alle validieren, 4 Epochen) | net4 (neueste validiert, 2 Epochen) |
+|---|---|---|
+| Gen 20 vs. Gen 0 | +66 ± 15 | +61 ± 15 |
+| Mittel Anker-Elo Gen 11–20 | 144 | 147 |
+| unveränderte Generationen | 8 von 20 | 7 von 20 |
+| Training-CPU (20 Gen.) | 922 s | 878 s |
+| **direkt: net4 Gen 20 vs. net2 Gen 20** | | **−0 ± 14** |
+
+- Kein messbarer Unterschied – weder besser noch schlechter. Auch die Trainingskosten sinken kaum (die Auflösung zu
+  ruhigen Stellungen dominiert, nicht die Epochen). Die Selbstpartien von net4 brauchten 700 CPU-s mehr bei gleichen
+  Knoten – Takt-/Temperaturschwankung (siehe M12), kein Effekt der Änderung.
+- Standard bleibt `VAL_FILES=0`, `EPOCHS=4`. Die Schleife lernt pro Generation wenig, aber nicht wegen des Gates;
+  Kandidaten für mehr Lernen pro CPU: bessere Labels (mehr Knoten in den Selbstpartien → besserer Lehrer für λ),
+  mehr Kapazität (H = 64), Leaf-Cache auch im Netz-Trainer (spart die wiederholte Auflösung des Fensters).
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 
