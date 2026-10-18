@@ -205,6 +205,9 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 17 | Gate: nur neueste Generation validiert, 2 Epochen | kein messbarer Unterschied (net4 vs. net2 direkt −0 ± 14) |
 | 18 | Besserer Lehrer (3000 Knoten) und größeres Netz (H = 64) | beides kein Gewinn pro CPU (−15 ± 15 / −10 ± 14 bei gleicher Zeit) |
 | 19 | Spielstil für den Lichess-Bot: Contempt, KnightLove | Contempt 50 kostet nichts (−4 ± 14), KnightLove 40 kostet −19 ± 14 |
+| 20 | Suche: RFP, Aspiration, Futility; Zeiteinteilung mit Uhr | **+69 Elo bei gleicher Zeit**; erster Zug auf Lichess 4 statt 22 s |
+| 21 | Suche: SEE-Pruning in der Ruhesuche | **+47 Elo** zusätzlich (Log-LMR, History-Malus, 50-Züge neutral) |
+| 22 | Neustarts aus Endspielstellungen (30 %, ≤ 14 Steine) | schadet (−37 ± 14), Endspiele nicht besser (+3 ± 14) |
 
 ### Meilenstein 5: Tempo
 
@@ -701,6 +704,52 @@ bleiben unverändert (Such-Fingerabdruck gleich).
 - Contempt ist praktisch gratis; die Remisquote sinkt im Selbstspiel nur wenig (11,5 → 9,9 %), weil Remisen dort
   ohnehin selten sind – gegen Menschen wirkt es eher. Die Springerliebe kostet etwa 20 Elo.
 - Beispielpartien: `runs/style/sample-games.pgn` (0,3 s/Zug).
+
+### Meilenstein 20/21: stärkere Suche
+
+Die Netz-Schleife war ausgereizt (net2 Gen 40 gegen Gen 20: +4 ± 14, 2000 Partien), also die Suche. Jede Technik
+als Option (`--a-search …`), gemessen bei **gleicher Zeit** (50 ms/Zug) mit net2 Gen 20 auf beiden Seiten, ohne
+Stil (`runs/search/`). Die Schwellen (80 cp × Tiefe, 100 + 100 cp × Tiefe, Fenster 30 cp, …) sind handgewählte
+Such-Struktur, kein Schachwissen; SEE rechnet mit den gelernten Figurenwerten.
+
+| Technik (gegen die jeweils vorige Standardsuche) | Elo |
+|---|---|
+| Reverse Futility Pruning (`rfp`) | +41 ± 20 |
+| Aspiration Windows (`asp`) | +23 ± 19 |
+| Futility Pruning (`fp`) | +12 ± 20 |
+| Late Move Pruning (`lmp`) | −17 ± 20 – verworfen |
+| **rfp + asp + fp zusammen** | **+69 ± 14** → neuer Standard (M20) |
+| 50-Züge-Skalierung der Bewertung (`fifty`) | −5 ± 14 |
+| logarithmisches LMR (`lmrlog`) | +6 ± 14 |
+| History-Malus (`hist`) | −5 ± 14 |
+| **SEE-Pruning in der Ruhesuche (`see`)** | **+47 ± 14** → Standard (M21) |
+
+- Trainingssuche (`exact`) unverändert (Fingerabdruck 14201976); Standard-Fingerabdruck jetzt 10195125.
+- **Zeiteinteilung mit Uhr** (Lichess): keine neue Iteration nach der halben Zielzeit, hartes Limit
+  min(15 % Restzeit, 2 × Ziel). Vorher dauerte der erste Zug einer 3+2-Partie 22 s, Lichess brach die ersten Partien
+  wegen Inaktivität ab.
+- Neue Tests: SEE-Werte in sechs Abtauschstellungen, Mattdistanzen mit Standard- und allen Optionen.
+- Lichess: Der Bot spielt seit M21 mit dieser Suche, net2 Gen 20, Contempt 15, KnightLove 20 (Contempt 50 hatte in
+  einer Partie 40 Züge lang Remisvarianten abgelehnt und dann verloren). Gegner 1600–2300.
+
+### Meilenstein 22: Neustarts aus Endspielstellungen – schadet
+
+Beobachtung auf Lichess: lange Endspiele ohne Plan (Bewertung 40 Züge konstant, dann plötzlich Fortschritt oder
+Verlust). Idee aus der Recherche (Braun 2026): Selbstpartien teils aus Stellungen früherer Partien starten.
+`selfplay --starts FILE --start-share PCT --start-max-pieces N --start-plies N` (Neustart = gespeicherte Stellung +
+2 Zufallszüge; Plies zählen ab 0, damit Partiegrenzen erkennbar bleiben), `match --starts` für Endspiel-Tests,
+`net-generations.sh`: `START_SHARE`, `START_MAX_PIECES` (Stellungen aus den Partien der Vorgeneration).
+
+Lauf **net7** = net2 + 30 % Neustarts aus Stellungen mit ≤ 14 Steinen, 20 Generationen (3965 CPU-s):
+
+| net7 Gen 20 gegen net2 Gen 20 (2000 Partien, 5000 Knoten) | Elo |
+|---|---|
+| normale Partien | **−37 ± 14** |
+| aus Endspielstellungen (≤ 14 Steine, aus net5 Gen 19) | +3 ± 14 |
+
+- Die Endspiele werden nicht besser, und der Rest leidet (30 % weniger Daten aus Eröffnung und Mittelspiel).
+  Vermutlich lernt das Netz Endspiele mit Ergebnis-/Suchlabels aus flacher Suche nicht besser – das Problem dort
+  ist der Horizont, nicht die Bewertung einzelner Stellungen. Optionen bleiben, Standard aus.
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 

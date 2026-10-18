@@ -1,0 +1,4 @@
+== net7 gen20 vs net2 gen20, normal, 5000 nodes
+runs/nnue-offline/linear-all.bin + net runs/net7/nets/gen20.bin vs runs/nnue-offline/linear-all.bin + net runs/net2/nets/gen20.bin: +786 =218 -996, score 44.8%, Elo -37 +/- 14
+== same from endgames (<=14 pieces of net5 gen19), 5000 nodes
+runs/nnue-offline/linear-all.bin + net runs/net7/nets/gen20.bin vs runs/nnue-offline/linear-all.bin + net runs/net2/nets/gen20.bin: +810 =395 -795, score 50.4%, Elo +3 +/- 14
