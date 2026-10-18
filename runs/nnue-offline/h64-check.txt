@@ -1,0 +1,4 @@
+== h64-s10-e60 vs h32-s10-e60, 5000 nodes
+runs/nnue-offline/linear-all.bin + net runs/nnue-offline/h64-s10-e60.bin vs runs/nnue-offline/linear-all.bin + net runs/nnue-offline/h32-s10-e60.bin: +910 =221 -869, score 51.0%, Elo +7 +/- 14
+== h64-s10-e60 vs h32-s10-e60, 0.1 s/move
+runs/nnue-offline/linear-all.bin + net runs/nnue-offline/h64-s10-e60.bin vs runs/nnue-offline/linear-all.bin + net runs/nnue-offline/h32-s10-e60.bin: +817 =307 -876, score 48.5%, Elo -10 +/- 14

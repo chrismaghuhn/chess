@@ -1,0 +1,4 @@
+== net5 gen9 (3988 CPU-s) vs net2 gen20 (4124 CPU-s), 5000 nodes, seed 49
+runs/nnue-offline/linear-all.bin + net runs/net5/nets/gen9.bin vs runs/nnue-offline/linear-all.bin + net runs/net2/nets/gen20.bin: +872 =172 -956, score 47.9%, Elo -15 +/- 15
+== net5 gen20 vs net2 gen20, 5000 nodes, seed 49
+runs/nnue-offline/linear-all.bin + net runs/net5/nets/gen20.bin vs runs/nnue-offline/linear-all.bin + net runs/net2/nets/gen20.bin: +901 =247 -852, score 51.2%, Elo +9 +/- 14

@@ -30,6 +30,7 @@ typedef struct {
     Weights weights;
     Network net;  /* loaded with setoption Network; hidden part may be empty */
     bool has_net;
+    int contempt, knight_love; /* playing style, see search_set_style */
     Search *search;
     SearchLimits limits;
     atomic_bool stop;
@@ -182,7 +183,20 @@ static void cmd_setoption(Uci *u, char *args) {
     while (len > 0 && (value[len - 1] == ' ' || value[len - 1] == '\t'))
         value[--len] = '\0';
 
-    if (strcasecmp(name, "Hash") == 0) {
+    if (strcasecmp(name, "Contempt") == 0 || strcasecmp(name, "KnightLove") == 0) {
+        char *end;
+        long v = strtol(value, &end, 10);
+        bool contempt = strcasecmp(name, "Contempt") == 0;
+        if (end == value || *end || v < 0 || v > (contempt ? 1000 : 500)) {
+            printf("info string could not set %s to %s\n", name, value);
+            return;
+        }
+        if (contempt)
+            u->contempt = (int)v;
+        else
+            u->knight_love = (int)v;
+        search_set_style(u->search, u->contempt, u->knight_love);
+    } else if (strcasecmp(name, "Hash") == 0) {
         int mb = atoi(value);
         if (mb < 1 || mb > MAX_HASH_MB || !search_resize(u->search, (size_t)mb))
             printf("info string could not set Hash to %s\n", value);
@@ -266,6 +280,8 @@ void uci_loop(void) {
             printf("option name Hash type spin default %d min 1 max %d\n", DEFAULT_HASH_MB, MAX_HASH_MB);
             printf("option name Weights type string default <empty>\n");
             printf("option name Network type string default <empty>\n");
+            printf("option name Contempt type spin default 0 min 0 max 1000\n");
+            printf("option name KnightLove type spin default 0 min 0 max 500\n");
             printf("uciok\n");
         } else if (strcmp(command, "isready") == 0) {
             printf("readyok\n");

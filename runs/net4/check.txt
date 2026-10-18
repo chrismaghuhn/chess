@@ -1,0 +1,4 @@
+== net4 gen20 vs net4 gen0, 5000 nodes, seed 48
+runs/nnue-offline/linear-all.bin + net runs/net4/nets/gen20.bin vs runs/nnue-offline/linear-all.bin + net runs/net4/nets/gen0.bin: +1073 =201 -726, score 58.7%, Elo +61 +/- 15
+== net4 gen20 vs net2 gen20, 5000 nodes, seed 49
+runs/nnue-offline/linear-all.bin + net runs/net4/nets/gen20.bin vs runs/nnue-offline/linear-all.bin + net runs/net2/nets/gen20.bin: +897 =205 -898, score 50.0%, Elo -0 +/- 14

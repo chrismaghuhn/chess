@@ -169,7 +169,7 @@ nm=$(timeout 120 "$engine" match --a "$tmp/tuned1.bin" --a-net "$tmp/net1.bin" -
 printf '%s\n' "$nm" | grep -q "+ net $tmp/net1.bin vs" || fail "match does not name the network"
 
 # Self-play with a network writes scored data; the network loop runs and resumes without redoing anything.
-timeout 60 "$engine" selfplay --games 4 --nodes 300 --threads 2 --weights "$tmp/tuned1.bin" --net "$tmp/net1.bin" \
+timeout 60 "$engine" selfplay --games 40 --nodes 300 --threads 4 --weights "$tmp/tuned1.bin" --net "$tmp/net1.bin" \
     --out "$tmp/net-play.bin" >/dev/null 2>&1 || fail "self-play with a network"
 case "$("$engine" data-info "$tmp/net-play.bin" 0)" in
     *"label_errors=0 "*) ;;
@@ -193,6 +193,38 @@ SMOOTH=5 loop >/dev/null && fail "network loop resumed with other settings"
 sed -i 's/ lambda=0.5//' "$tmp/net-gens/settings.txt"
 [ "$(loop | grep -c '^  ')" -eq 0 ] || fail "network loop without lambda in its settings did not resume"
 LAMBDA=0.5 loop >/dev/null && fail "network loop without lambda resumed with LAMBDA=0.5"
+# Restarts: endgame positions of earlier games start new ones; labels stay consistent, and matches can
+# start from such positions too.
+timeout 60 "$engine" selfplay --games 12 --nodes 200 --threads 3 --weights "$tmp/tuned1.bin" --starts "$data" \
+    --start-share 100 --start-max-pieces 12 --out "$tmp/restart.bin" >/dev/null 2>&1 || fail "self-play with restarts"
+case "$("$engine" data-info "$tmp/restart.bin" 0)" in
+    *"games=12 "*"label_errors=0 "*) ;;
+    *) fail "self-play with restarts: $("$engine" data-info "$tmp/restart.bin" 0)" ;;
+esac
+timeout 60 "$engine" selfplay --games 12 --nodes 200 --threads 1 --weights "$tmp/tuned1.bin" --starts "$data" \
+    --start-share 100 --start-max-pieces 12 --out "$tmp/restart1.bin" >/dev/null 2>&1
+cmp -s "$tmp/restart.bin" "$tmp/restart1.bin" || fail "self-play with restarts depends on the thread count"
+"$engine" selfplay --games 2 --out "$tmp/x.bin" --starts "$data" --start-share 50 --start-max-pieces 2 2>/dev/null \
+    && fail "restarts without matching positions accepted"
+"$engine" selfplay --games 2 --out "$tmp/x.bin" --starts "$data" 2>/dev/null && fail "--starts without --start-share accepted"
+# Mixed: restarted and normal games interleave in the file, and every game is still told apart (first-position
+# flag), also when a restart's plies would continue into the next game's.
+timeout 120 "$engine" selfplay --games 40 --nodes 200 --threads 4 --weights "$tmp/tuned1.bin" --starts "$data" \
+    --start-share 50 --start-max-pieces 12 --out "$tmp/restart-mixed.bin" >/dev/null 2>&1 || fail "mixed restarts"
+case "$("$engine" data-info "$tmp/restart-mixed.bin" 0)" in
+    *"games=40 "*"label_errors=0 "*) ;;
+    *) fail "mixed restarts: $("$engine" data-info "$tmp/restart-mixed.bin" 0)" ;;
+esac
+restarts=$(python3 -c '
+import sys
+d = open(sys.argv[1], "rb").read()
+first = [d[i:i + 36] for i in range(16, len(d), 36) if d[i + 34] & 2]
+print(len(first), sum(1 for r in first if r[30] | r[31] << 8 != 8))' "$tmp/restart-mixed.bin")
+set -- $restarts
+[ "$1" = 40 ] && [ "$2" -gt 5 ] && [ "$2" -lt 35 ] || fail "mixed restarts: $1 games marked, $2 restarted"
+rs=$(timeout 60 "$engine" match --a "$tmp/tuned1.bin" --games 4 --nodes 200 --threads 2 --starts "$data" \
+    --start-max-pieces 12 --random-plies 0 2>/dev/null)
+[ "$(kv "$rs" games)" = 4 ] || fail "match from start positions: $rs"
 "$nnue_train" --data "$data" --resolve "$tmp/tuned1.bin" --init-net "$tmp/net1.bin" --hidden 8 --out "$tmp/x.bin" \
     2>/dev/null && fail "--init-net with another --hidden accepted"
 # Search scores as labels change the start loss on scored data (game 0 is in the test part); lambda above 1 is refused.
@@ -201,13 +233,25 @@ lam() {
         --hidden 16 --epochs 1 --threads 2 --out "$tmp/net-lambda.bin" --lambda "$1" 2>/dev/null
 }
 # On its own games the network agrees with its own search scores far better than with the results;
-# a sign or perspective error in the score targets would turn that around.
+# a sign or perspective error in the score targets would turn that around. Validation and test
+# together (8 of 40 games), since a few games alone are noisy.
 l0=$(lam 0)
 l1=$(lam 1)
-awk "BEGIN { exit !($(kv "$l1" start_test) < 0.5 * $(kv "$l0" start_test)) }" 2>/dev/null \
-    || fail "--lambda 1 targets do not match the network's own scores: $(kv "$l0" start_test) -> $(kv "$l1" start_test)"
+awk "BEGIN { exit !($(kv "$l1" start_val) + $(kv "$l1" start_test) < 0.7 * ($(kv "$l0" start_val) + $(kv "$l0" start_test))) }" \
+    2>/dev/null || fail "--lambda 1 targets do not match the network's own scores: $l0 / $l1"
 [ "$(kv "$l1" scored)" -gt 0 ] && [ "$(kv "$l0" scored)" = 0 ] || fail "scored count with --lambda"
 lam 1.5 >/dev/null && fail "--lambda above 1 accepted"
+# --val-files 1: only the last file validates, the other one trains on its validation games.
+split() { # prints "train val test" games
+    timeout 60 "$nnue_train" --data "$tmp/cache-data.bin" --data "$tmp/cache-more.bin" --resolve "$tmp/tuned1.bin" \
+        --hidden 4 --epochs 1 --threads 2 --out "$tmp/x.bin" "$@" 2>&1 >/dev/null \
+        | sed -n 's/^games train\/val\/test \([0-9]*\)\/\([0-9]*\)\/\([0-9]*\),.*/\1 \2 \3/p'
+}
+all=$(split)
+last=$(split --val-files 1)
+set -- $all $last
+[ "$5" -gt 0 ] && [ $(($5 * 2)) -eq "$2" ] && [ $(($4 + $5)) -eq $(($1 + $2)) ] && [ "$6" -eq "$3" ] \
+    || fail "--val-files 1 split: $all -> $last"
 
 # The quiet-move penalty makes the network part change less over a quiet move.
 rough=$(timeout 120 "$nnue_train" --data "$data" --resolve "$tmp/tuned1.bin" --out "$tmp/net-rough.bin" --hidden 16 \

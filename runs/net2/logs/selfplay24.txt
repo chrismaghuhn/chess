@@ -1,0 +1,5 @@
+games 2000, positions 200801, white wins 1044, draws 183, black wins 773
+ends: mate 1817 stalemate 1 repetition 106 fifty-moves 36 material 38 ply-limit 2 resign 0
+average 108.4 plies, 299450281 nodes, cpu 195.77 s, wall 25.80 s
+resignation (from 2000 games that never resign): threshold 200: 237/1797 false 300: 115/1715 false 400: 51/1650 false 600: 9/1549 false 800: 0/1438 false 1200: 0/1287 false 2000: 0/1241 false -> not used 0
+summary games=2000 positions=200801 white_wins=1044 draws=183 black_wins=773 plies=216801 nodes=299450281 resigned=0 resign_threshold=0 resign_false=0 resign_checks=0 cpu_s=195.770 wall_s=25.804

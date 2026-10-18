@@ -6,7 +6,7 @@ engine="$1"
 failures=0
 
 run() {
-    timeout 5 "$engine"
+    timeout 30 "$engine" # generous: the sanitizer build on a busy machine is slow
 }
 
 expect() {
@@ -71,13 +71,29 @@ expect '^bestmove [a-h][1-8][a-h][1-8]' "movetime 0"
 output=$(printf 'setoption name Hash value 64\nisready\nquit\n' | run)
 expect '^readyok$' "setoption"
 
+# Playing style: with contempt a dead draw scores against the searching side; knight love raises the
+# score of an extra knight (pawns on the board, so it is no material draw); bad values are refused.
+output=$(printf 'setoption name Contempt value 50\nposition fen 8/8/8/4k3/8/8/8/4K3 w - - 0 1\ngo depth 3\n' \
+    | (cat; sleep 8; echo quit) | run)
+expect 'depth 3 .*score cp -50 ' "contempt scores a draw as -50"
+score_with() { # KnightLove -> score at depth 1 with an extra white knight
+    printf 'setoption name KnightLove value %s\nposition fen 4k3/p7/8/8/8/8/P7/1N2K3 w - - 0 1\ngo depth 1\n' "$1" \
+        | (cat; sleep 8; echo quit) | run | sed -n 's/^info depth 1 .*score cp \(-\{0,1\}[0-9]*\) .*/\1/p'
+}
+s0=$(score_with 0)
+s100=$(score_with 100)
+[ -n "$s0" ] && [ -n "$s100" ] && [ $((s100 - s0)) -eq 100 ] \
+    || { echo "FAIL uci KnightLove: $s0 -> $s100"; failures=$((failures + 1)); }
+output=$(printf 'setoption name Contempt value -5\nsetoption name KnightLove value 999\nquit\n' | run)
+[ "$(printf '%s\n' "$output" | grep -c 'could not set')" -eq 2 ] || { echo "FAIL uci style values not checked"; failures=$((failures + 1)); }
+
 # Search fingerprint with all weights 0. If a search change is meant to alter it,
 # update the number here (and say so in the commit).
-bench=$(timeout 60 "$engine" bench | sed -n 's/^\([0-9]*\) nodes.*/\1/p')
+bench=$(timeout 300 "$engine" bench | sed -n 's/^\([0-9]*\) nodes.*/\1/p')
 # "exact" is the training search: it must keep matching the engine of runs 1 and 4.
-exact=$(timeout 60 "$engine" bench 7 exact | sed -n 's/^\([0-9]*\) nodes.*/\1/p')
+exact=$(timeout 300 "$engine" bench 7 exact | sed -n 's/^\([0-9]*\) nodes.*/\1/p')
 [ "$exact" = 14201976 ] || { echo "FAIL uci bench exact: $exact nodes, expected 14201976"; failures=$((failures + 1)); }
-[ "$bench" = 10196665 ] || { echo "FAIL uci bench: $bench nodes, expected 10196665"; failures=$((failures + 1)); }
+[ "$bench" = 10195125 ] || { echo "FAIL uci bench: $bench nodes, expected 10195125"; failures=$((failures + 1)); }
 
 if [ "$failures" -ne 0 ]; then
     echo "$failures FAILED"

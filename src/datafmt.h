@@ -24,12 +24,14 @@
  *   32..33  score of the self-play search at this position, side to move's
  *           view (int16; mate scores included), version 2 only
  *   34      flags: bit 0 = the score means something (weights were not all
- *           zero; generation 0 scores everything 0), version 2 only
+ *           zero; generation 0 scores everything 0), version 2 only;
+ *           bit 1 = first position of a game (written since milestone 22)
  *   35      reserved (0)
  *
  * Records of one game are stored in order, so a new game starts wherever
- * the ply does not go up by one. Unused nibbles and the header's reserved
- * word must be zero.
+ * the ply does not go up by one or the record is marked first (games that
+ * restart from a stored position can continue another game's ply count).
+ * Unused nibbles and the header's reserved word must be zero.
  */
 #define DATA_VERSION 2
 #define DATA_HEADER_SIZE 16
@@ -45,7 +47,16 @@ typedef struct {
     int ply;
     int score;        /* self-play search score, side to move's view */
     bool score_valid; /* false for version 1 data and generation 0 */
+    bool first;       /* marked as the first position of a game */
 } DataPosition;
+
+#define DATA_FLAG_SCORE 1
+#define DATA_FLAG_FIRST 2
+
+/* Whether a raw record starts a new game after one with ply prev_ply. */
+static inline bool data_new_game(const uint8_t record[DATA_RECORD_SIZE], int prev_ply) {
+    return (record[34] & DATA_FLAG_FIRST) || (record[30] | record[31] << 8) != prev_ply + 1;
+}
 
 /* score is stored only when score_valid (otherwise 0). */
 void data_pack(const Board *b, int result, int ply, int score, bool score_valid, uint8_t out[DATA_RECORD_SIZE]);
@@ -67,5 +78,12 @@ FILE *data_open(const char *path, uint64_t *count, int *record_size, char *err, 
 
 /* Reads the next record; version 1 records get "no score" in bytes 32..35. */
 bool data_read(FILE *f, int record_size, uint8_t out[DATA_RECORD_SIZE]);
+
+/*
+ * The positions of a data file with at most max_pieces pieces (kings
+ * included), as starting positions for games (milestone 22). NULL with
+ * err set if the file cannot be read or has no such position.
+ */
+Board *data_load_starts(const char *path, int max_pieces, size_t *count, char *err, size_t err_size);
 
 #endif

@@ -9,7 +9,10 @@
 #include <string.h>
 #include <time.h>
 
+#include "attacks.h"
 #include "eval.h"
+#include <math.h>
+#include <pthread.h>
 #include "movegen.h"
 #include "nnue.h"
 #include "rng.h"
@@ -45,6 +48,12 @@ struct Search {
     NnueAccumulator *acc;   /* [MAX_PLY] */
     const Board *acc_board[MAX_PLY];
     bool acc_valid[MAX_PLY];
+
+    /* Playing style (milestone 19, for the Lichess bot; 0 = off, as in training and measurements). */
+    int contempt;    /* a draw counts this much against the side that is searching */
+    int knight_love; /* each of its own knights is worth this much more to the searching side */
+    int root_side;   /* the side that is searching */
+    int styled_side; /* root side the hash table's style-dependent scores were stored for */
     bool zero_weights;      /* all weights 0: generation 0 */
     int piece_value[6];     /* learned: average weight of each piece type */
     int history[2][64][64]; /* [side][from][to] */
@@ -95,7 +104,9 @@ bool search_parse_options(const char *text, unsigned *options) {
         const char *name;
         unsigned flag;
     } names[] = { { "pvs", SEARCH_PVS }, { "nmp", SEARCH_NMP }, { "lmr", SEARCH_LMR },
-                  { "all", SEARCH_ALL }, { "exact", SEARCH_EXACT_TIES } };
+                  { "all", SEARCH_ALL }, { "exact", SEARCH_EXACT_TIES }, { "rfp", SEARCH_RFP }, { "fp", SEARCH_FP },
+                  { "lmp", SEARCH_LMP }, { "asp", SEARCH_ASP }, { "fifty", SEARCH_FIFTY },
+                  { "lmrlog", SEARCH_LMRLOG }, { "hist", SEARCH_HIST }, { "see", SEARCH_SEE } };
 
     *options = 0;
     if (strcmp(text, "none") == 0)
@@ -220,8 +231,14 @@ static void set_time_limits(Search *s, const SearchLimits *l, int side) {
         double inc = l->inc[side] > 0 ? l->inc[side] / 1000.0 : 0;
         int moves = l->movestogo > 0 ? l->movestogo : 30;
         double base = left / moves + inc * 0.75;
-        s->hard_limit = max_d(0.001, min_d(left * 0.5, base * 3) - overhead);
-        s->soft_limit = min_d(base, s->hard_limit);
+        /*
+         * A new iteration often takes as long as all before it, so none is
+         * started after half the target time; the hard limit caps an
+         * iteration that runs away (it was left / 2 and base * 3, which let
+         * the first move of a 3+2 game take 22 s, and Lichess abort it).
+         */
+        s->hard_limit = max_d(0.001, min_d(left * 0.15, base * 2) - overhead);
+        s->soft_limit = min_d(base * 0.5, s->hard_limit);
     }
 }
 
@@ -313,6 +330,71 @@ static void reward_history(int *entry, int depth) {
     *entry += bonus - *entry * bonus / HISTORY_MAX; /* stays within HISTORY_MAX */
 }
 
+/* The opposite: a quiet move tried before the one that cut off loses standing. */
+static void punish_history(int *entry, int depth) {
+    int malus = depth * depth < HISTORY_MAX ? depth * depth : HISTORY_MAX;
+    *entry -= malus + *entry * malus / HISTORY_MAX; /* stays within -HISTORY_MAX */
+}
+
+/* Logarithmic late move reduction by depth and move number (SEARCH_LMRLOG). */
+static int lmr_table[64][64];
+static pthread_once_t lmr_once = PTHREAD_ONCE_INIT;
+
+static void lmr_init(void) {
+    for (int d = 1; d < 64; d++)
+        for (int n = 1; n < 64; n++)
+            lmr_table[d][n] = (int)(0.75 + log(d) * log(n) / 2.25);
+}
+
+static int lmr_reduction(int depth, int moves) {
+    pthread_once(&lmr_once, lmr_init);
+    return lmr_table[depth < 63 ? depth : 63][moves < 63 ? moves : 63];
+}
+
+static Bitboard attackers_to(const Board *b, int sq, Bitboard occupied) {
+    const Bitboard (*p)[6] = b->pieces;
+    Bitboard diagonal = p[WHITE][BISHOP] | p[BLACK][BISHOP] | p[WHITE][QUEEN] | p[BLACK][QUEEN];
+    Bitboard straight = p[WHITE][ROOK] | p[BLACK][ROOK] | p[WHITE][QUEEN] | p[BLACK][QUEEN];
+    return ((pawn_attacks[BLACK][sq] & p[WHITE][PAWN]) | (pawn_attacks[WHITE][sq] & p[BLACK][PAWN])
+            | (knight_attacks[sq] & (p[WHITE][KNIGHT] | p[BLACK][KNIGHT]))
+            | (king_attacks[sq] & (p[WHITE][KING] | p[BLACK][KING])) | (bishop_attacks(sq, occupied) & diagonal)
+            | (rook_attacks(sq, occupied) & straight))
+         & occupied;
+}
+
+int search_see(const Search *s, const Board *b, Move m) {
+    if (!move_is_capture(m) || move_is_promo(m) || move_flags(m) == MF_EP_CAPTURE)
+        return 0;
+    int value[6];
+    memcpy(value, s->piece_value, sizeof value);
+    value[KING] = 30000; /* capturing the king ends every exchange */
+    int from = move_from(m), to = move_to(m);
+    int gain[33], depth = 0;
+    Bitboard occupied = b->all, from_bb = (Bitboard)1 << from;
+    int piece = piece_type(b->squares[from]);
+    int side = b->side;
+    gain[0] = value[piece_type(b->squares[to])];
+    Bitboard attackers = attackers_to(b, to, occupied);
+    while (from_bb && depth < 32) {
+        depth++;
+        gain[depth] = value[piece] - gain[depth - 1]; /* if the piece just moved there is taken */
+        occupied ^= from_bb;
+        attackers = attackers_to(b, to, occupied); /* uncovers pieces behind */
+        side ^= 1;
+        from_bb = 0;
+        for (int type = PAWN; type <= KING && !from_bb; type++) {
+            Bitboard bb = attackers & b->pieces[side][type];
+            if (bb) {
+                from_bb = bb & -bb;
+                piece = type;
+            }
+        }
+    }
+    while (--depth)
+        gain[depth - 1] = -(-gain[depth - 1] > gain[depth] ? -gain[depth - 1] : gain[depth]);
+    return gain[0];
+}
+
 /* Every node registers its board, so the network can update its accumulators lazily along the path. */
 static inline void enter(Search *s, const Board *b, int ply) {
     if (s->net) {
@@ -346,10 +428,30 @@ static int network_evaluate(Search *s, int ply) {
 
 /*
  * The one place the search evaluates a position: the linear evaluation kept
- * incrementally, or a network (milestones 9 and 14).
+ * incrementally, or a network (milestones 9 and 14), plus the style bonus.
  */
 static inline int evaluate(Search *s, const Board *b, int psq, int ply) {
-    return s->net ? network_evaluate(s, ply) : eval_from_psq(psq, b->side);
+    int score = s->net ? network_evaluate(s, ply) : eval_from_psq(psq, b->side);
+    if (s->knight_love) {
+        int mine = popcount(b->pieces[s->root_side][KNIGHT]) - popcount(b->pieces[!s->root_side][KNIGHT]);
+        score += (b->side == s->root_side ? 1 : -1) * s->knight_love * mine;
+    }
+    /* The closer the 50-move rule, the closer to a draw: progress (pawn moves, captures) pays. */
+    if (s->options & SEARCH_FIFTY)
+        score = score * (200 - b->halfmove) / 200;
+    return score;
+}
+
+/* Score of a draw for the side to move: worse than 0 for the searching side with contempt. */
+static inline int draw_score(const Search *s, const Board *b) {
+    return b->side == s->root_side ? -s->contempt : s->contempt;
+}
+
+void search_set_style(Search *s, int contempt, int knight_love) {
+    if (s->contempt != contempt || s->knight_love != knight_love)
+        tt_clear(&s->tt); /* stored scores came from the old style */
+    s->contempt = contempt;
+    s->knight_love = knight_love;
 }
 
 /* psq: the incrementally kept weight sum of b (see eval_psq). */
@@ -389,6 +491,9 @@ static int qsearch(Search *s, const Board *b, int psq, int alpha, int beta, int 
 
     for (int i = 0; i < list.count; i++) {
         Move m = pick_move(&list, scores, i);
+        /* Captures that lose material in the exchange are not worth a look (SEARCH_SEE). */
+        if ((s->options & SEARCH_SEE) && !in_check && !s->zero_weights && search_see(s, b, m) < 0)
+            continue;
         Board next;
         if (!board_make_move_fast(b, m, &next, pinned, in_check))
             continue;
@@ -420,6 +525,8 @@ bool search_quiet(Search *s, const Board *b, uint64_t max_nodes, Board *leaf, in
     s->nodes = 0;
     s->stopped = false;
 
+    s->root_side = b->side;
+    s->styled_side = -1; /* qsearch stores nothing, but the next search_run must not trust older entries */
     int result = qsearch(s, b, eval_psq(s->weights, b), -SCORE_INF, SCORE_INF, 0);
     if (nodes)
         *nodes = s->nodes;
@@ -445,7 +552,7 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
 
     bool root = ply == 0;
     if (!root && is_draw(s, b))
-        return 0;
+        return draw_score(s, b);
 
     bool in_check = board_in_check(b);
     if (in_check)
@@ -484,6 +591,22 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
     }
 
     /*
+     * Static evaluation, computed once when a pruning rule needs it. Pruning
+     * only happens outside the principal variation and out of check, and not
+     * in generation 0 (all evaluations 0).
+     */
+    bool pv_node = beta - alpha > 1;
+    bool prunable = !root && !pv_node && !in_check && !s->zero_weights;
+    int static_eval = 0;
+    bool have_eval = false;
+#define STATIC_EVAL() (have_eval ? static_eval : (have_eval = true, static_eval = evaluate(s, b, psq, ply)))
+
+    /* Reverse futility: far enough above beta that a shallow search will not fall below it. */
+    if ((s->options & SEARCH_RFP) && prunable && depth <= 6 && beta > -SCORE_MATE_BOUND && beta < SCORE_MATE_BOUND
+        && STATIC_EVAL() - 80 * depth >= beta)
+        return static_eval;
+
+    /*
      * Null-move pruning: if passing the move still leaves us at or above
      * beta in a shallower search, a real move will too. Only outside the
      * principal variation, not in check, and not with only king and pawns,
@@ -491,11 +614,10 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
      * either: with all weights 0 every position is "at beta", passing would
      * prune nearly everything, and gen 0 would play almost without search.
      */
-    bool pv_node = beta - alpha > 1;
     const Bitboard *own = b->pieces[b->side];
     if ((s->options & SEARCH_NMP) && !s->zero_weights && !root && !pv_node && !in_check && depth >= 3
         && (own[KNIGHT] | own[BISHOP] | own[ROOK] | own[QUEEN])
-        && evaluate(s, b, psq, ply) >= beta) {
+        && STATIC_EVAL() >= beta) {
         Board null;
         board_make_null(b, &null);
         int reduction = 2 + depth / 4;
@@ -542,6 +664,8 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
     bool random_ties = root && s->limits->seed && exact_ties;
     Move ties[MAX_MOVES];
     int tie_count = 0;
+    Move quiets[MAX_MOVES]; /* quiet moves searched so far (SEARCH_HIST) */
+    int quiet_count = 0;
 
     for (int i = 0; i < list.count; i++) {
         Move m = pick_move(&list, scores, i);
@@ -549,6 +673,20 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
         if (!board_make_move_fast(b, m, &next, pinned, in_check))
             continue;
         legal++;
+
+        /*
+         * Near the leaves, quiet moves that do not give check are skipped when
+         * the position is hopeless for them (futility) or when they come late
+         * in the ordering (late move pruning). The first move is always searched.
+         */
+        if (prunable && legal > 1 && depth <= 3 && best > -SCORE_MATE_BOUND && (s->options & (SEARCH_FP | SEARCH_LMP))
+            && !move_is_capture(m)
+            && !move_is_promo(m) && alpha > -SCORE_MATE_BOUND && !board_in_check(&next)) {
+            if ((s->options & SEARCH_FP) && STATIC_EVAL() + 100 + 100 * depth <= alpha)
+                continue;
+            if ((s->options & SEARCH_LMP) && legal > 3 + 2 * depth * depth)
+                continue;
+        }
 
         int child_psq = psq + eval_psq_delta(s->weights, b, m);
         s->hashes[s->hash_count++] = next.hash;
@@ -567,6 +705,10 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
                 && !move_is_capture(m) && !move_is_promo(m) && m != s->killers[ply][0]
                 && m != s->killers[ply][1] && !board_in_check(&next))
                 reduction = legal > 8 && depth >= 5 ? 2 : 1;
+            if (reduction && (s->options & SEARCH_LMRLOG)) {
+                reduction = lmr_reduction(depth, legal) - pv_node;
+                reduction = reduction < 1 ? 1 : reduction > depth - 2 ? depth - 2 : reduction;
+            }
             score = -negamax(s, &next, child_psq, depth - 1 - reduction, -alpha - 1, -alpha, ply + 1);
             if (score > alpha && reduction && !s->stopped)
                 score = -negamax(s, &next, child_psq, depth - 1, -alpha - 1, -alpha, ply + 1);
@@ -576,6 +718,9 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
         s->hash_count--;
         if (s->stopped)
             return 0;
+        bool cut = score > alpha && score >= beta;
+        if (!cut && !move_is_capture(m) && !move_is_promo(m))
+            quiets[quiet_count++] = m;
 
         if (random_ties && score == best)
             ties[tie_count++] = m;
@@ -593,6 +738,9 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
 
                 if (score >= beta) {
                     reward_history(&s->history[b->side][move_from(m)][move_to(m)], depth);
+                    if ((s->options & SEARCH_HIST) && !move_is_capture(m) && !move_is_promo(m))
+                        for (int q = 0; q < quiet_count; q++)
+                            punish_history(&s->history[b->side][move_from(quiets[q])][move_to(quiets[q])], depth);
                     if (!move_is_capture(m) && !move_is_promo(m) && s->killers[ply][0] != m) {
                         s->killers[ply][1] = s->killers[ply][0];
                         s->killers[ply][0] = m;
@@ -603,8 +751,9 @@ static int negamax(Search *s, const Board *b, int psq, int depth, int alpha, int
         }
     }
 
+#undef STATIC_EVAL
     if (!legal)
-        return in_check ? -SCORE_MATE + ply : 0;
+        return in_check ? -SCORE_MATE + ply : draw_score(s, b);
 
     if (tie_count > 1) {
         /*
@@ -667,6 +816,11 @@ SearchResult search_run(Search *s, const Game *game, const SearchLimits *limits,
     memcpy(s->hashes, game->hashes, (size_t)game->count * sizeof game->hashes[0]);
     s->hash_count = game->count;
     set_time_limits(s, limits, root->side);
+    s->root_side = root->side;
+    /* Draw and knight scores depend on who searches: stored ones do not fit the other side. */
+    if ((s->contempt || s->knight_love) && s->styled_side != root->side)
+        tt_clear(&s->tt);
+    s->styled_side = root->side;
 
     /* Fallback in case the first iteration gets cut off. */
     MoveList list;
@@ -685,7 +839,24 @@ SearchResult search_run(Search *s, const Game *game, const SearchLimits *limits,
     int max_depth = limits->depth > 0 && limits->depth < MAX_PLY ? limits->depth : MAX_PLY - 1;
     for (int depth = 1; depth <= max_depth; depth++) {
         s->seldepth = 0;
-        int score = negamax(s, root, root_psq, depth, -SCORE_INF, SCORE_INF, 0);
+        int score;
+        if ((s->options & SEARCH_ASP) && depth >= 5 && abs(result.score) < SCORE_MATE_BOUND) {
+            /* Aspiration window around the last score, widened until the score falls inside. */
+            int window = 30, alpha = result.score - window, beta = result.score + window;
+            for (;;) {
+                score = negamax(s, root, root_psq, depth, alpha, beta, 0);
+                if (s->stopped)
+                    break;
+                if (score <= alpha)
+                    alpha = window > 1000 ? -SCORE_INF : score - (window *= 2);
+                else if (score >= beta)
+                    beta = window > 1000 ? SCORE_INF : score + (window *= 2);
+                else
+                    break;
+            }
+        } else {
+            score = negamax(s, root, root_psq, depth, -SCORE_INF, SCORE_INF, 0);
+        }
         if (s->stopped)
             break;
 

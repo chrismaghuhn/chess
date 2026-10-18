@@ -202,6 +202,12 @@ runs/<name>/  ein Trainingslauf: generations.csv, generations.svg, weights/, log
 | 14 | Schnelle Netz-Bewertung (int16, inkrementell) | 1,3× statt 5,6× langsamer; **+74 Elo bei gleicher Zeit** gegen das beste lineare Modell |
 | 15 | Netz in der Trainingsschleife | hält das Niveau, nur +20 ± 15 in 20 Generationen (4357 CPU-s) – Ergebnis-Labels tragen kaum |
 | 16 | Suchbewertung des Netzes als Label (λ = 0,5) | +66 in 20 Generationen (Ergebnis allein: +20); **+113 bei gleicher Zeit** gegen das beste lineare Modell |
+| 17 | Gate: nur neueste Generation validiert, 2 Epochen | kein messbarer Unterschied (net4 vs. net2 direkt −0 ± 14) |
+| 18 | Besserer Lehrer (3000 Knoten) und größeres Netz (H = 64) | beides kein Gewinn pro CPU (−15 ± 15 / −10 ± 14 bei gleicher Zeit) |
+| 19 | Spielstil für den Lichess-Bot: Contempt, KnightLove | Contempt 50 kostet nichts (−4 ± 14), KnightLove 40 kostet −19 ± 14 |
+| 20 | Suche: RFP, Aspiration, Futility; Zeiteinteilung mit Uhr | **+69 Elo bei gleicher Zeit**; erster Zug auf Lichess 4 statt 22 s |
+| 21 | Suche: SEE-Pruning in der Ruhesuche | **+47 Elo** zusätzlich (Log-LMR, History-Malus, 50-Züge neutral) |
+| 22 | Neustarts aus Endspielstellungen (30 %, ≤ 14 Steine) | schadet (−29 ± 14), Endspiele nicht messbar besser (+8 ± 14) |
 
 ### Meilenstein 5: Tempo
 
@@ -634,6 +640,121 @@ am Zuglimit nur die Bewertung; X = 0 ist exakt das alte Verhalten. Netz-Schleife
   Überanpassung ans Fenster ab Epoche 0,5. Kandidaten: nur auf der neuesten Generation validieren, weniger Epochen.
 - Unveränderte Netze werden jetzt nicht mehr neu gemessen (vorher zeigten X-gegen-X-Matches Rauschen von bis zu
   ±24 Elo in `elo_vs_prev`).
+
+### Meilenstein 17: Gate nur auf der neuesten Generation – kein Effekt
+
+Aus dem Review von M15/16: Drei Viertel der Validierungspartien im Fenster hatten das Startnetz schon ausgewählt.
+`nnue-train --val-files N`: nur die letzten N Dateien validieren, ältere trainieren auf ihren Validierungspartien;
+in der Schleife `VAL_FILES`. Lauf **net4** = net2 mit `VAL_FILES=1` und `EPOCHS=2` (beides auf einmal).
+
+| | net2 (alle validieren, 4 Epochen) | net4 (neueste validiert, 2 Epochen) |
+|---|---|---|
+| Gen 20 vs. Gen 0 | +66 ± 15 | +61 ± 15 |
+| Mittel Anker-Elo Gen 11–20 | 144 | 147 |
+| unveränderte Generationen | 8 von 20 | 7 von 20 |
+| Training-CPU (20 Gen.) | 922 s | 878 s |
+| **direkt: net4 Gen 20 vs. net2 Gen 20** | | **−0 ± 14** |
+
+- Kein messbarer Unterschied – weder besser noch schlechter. Auch die Trainingskosten sinken kaum (die Auflösung zu
+  ruhigen Stellungen dominiert, nicht die Epochen). Die Selbstpartien von net4 brauchten 700 CPU-s mehr bei gleichen
+  Knoten – Takt-/Temperaturschwankung (siehe M12), kein Effekt der Änderung.
+- Standard bleibt `VAL_FILES=0`, `EPOCHS=4`. Die Schleife lernt pro Generation wenig, aber nicht wegen des Gates;
+  Kandidaten für mehr Lernen pro CPU: bessere Labels (mehr Knoten in den Selbstpartien → besserer Lehrer für λ),
+  mehr Kapazität (H = 64), Leaf-Cache auch im Netz-Trainer (spart die wiederholte Auflösung des Fensters).
+
+### Meilenstein 18: besserer Lehrer, größeres Netz – beides kein Gewinn
+
+**Mehr Knoten in den Selbstpartien** (Lauf net5 = net2 mit `NODES=3000`, 20 Generationen, 9259 CPU-s statt 4124):
+Die Anker-Kurve sah gut aus (Gen 20: +198 gegen `linear-all`, Mittel Gen 11–20: 167 statt 144), die direkten
+Vergleiche nicht:
+
+| direkt, 2000 Partien, 5000 Knoten | Elo |
+|---|---|
+| net5 Gen 9 (3988 CPU-s) vs. net2 Gen 20 (4124 CPU-s) – gleiche CPU | −15 ± 15 |
+| net5 Gen 20 (9259 CPU-s) vs. net2 Gen 20 | +9 ± 14 |
+
+- Der tiefere Lehrer lohnt sich nicht: bei gleicher CPU eher schlechter, mit 2,2× CPU nicht messbar besser.
+- Lehre: Die Anker-Elo gegen `linear-all` überschätzt Unterschiede zwischen Netzen; Entscheidungen nur nach direkten
+  Matches.
+
+**Größeres Netz** (H = 64, `--smooth 10`, 60 Epochen, M9-Daten, 18326 CPU-s): Test-Loss 0,1181 statt 0,1184 (H = 32).
+Gegen H = 32: +7 ± 14 bei 5000 Knoten, **−10 ± 14 bei 0,1 s/Zug**. Mehr Kapazität bringt bei diesen Daten nichts; die
+Schleife mit H = 64 (geplant als net6) habe ich deshalb nicht gestartet.
+
+- Stand: Die stärkste Version bleibt net2 Gen 20 (λ = 0,5, H = 32, 1500 Knoten). Weder Gate, Lehrertiefe noch
+  Kapazität waren der Engpass; offen bleibt, was die Netz-Schleife schneller lernen lässt.
+
+### Meilenstein 19: Spielstil für den Lichess-Bot
+
+Persönlichkeit statt Stärke – bewusst handgewählte Werte, aber nur für den Bot; Standard 0, Training und Messungen
+bleiben unverändert (Such-Fingerabdruck gleich).
+- **`Contempt`** (UCI, `match --a-contempt`): Ein Remis zählt für die suchende Seite −X (Wiederholung, 50 Züge, Patt,
+  Material) – sie spielt auf Gewinn.
+- **`KnightLove`** (UCI, `match --a-knight-love`): +X pro Springer, den die suchende Seite mehr hat als der Gegner.
+
+`net2` Gen 20 mit Stil gegen sich selbst ohne Stil, 2000 Partien, 5000 Knoten (`runs/style/`):
+
+| Stil | Elo | Remisen |
+|---|---|---|
+| ohne (Kontrolle) | +2 ± 14 | 230 |
+| Contempt 50 | −4 ± 14 | 198 |
+| KnightLove 40 | −19 ± 14 | 246 |
+| beides | −24 ± 14 | 219 |
+
+- Contempt ist praktisch gratis; die Remisquote sinkt im Selbstspiel nur wenig (11,5 → 9,9 %), weil Remisen dort
+  ohnehin selten sind – gegen Menschen wirkt es eher. Die Springerliebe kostet etwa 20 Elo.
+- Beispielpartien: `runs/style/sample-games.pgn` (0,3 s/Zug).
+
+### Meilenstein 20/21: stärkere Suche
+
+Die Netz-Schleife war ausgereizt (net2 Gen 40 gegen Gen 20: +4 ± 14, 2000 Partien), also die Suche. Jede Technik
+als Option (`--a-search …`), gemessen bei **gleicher Zeit** (50 ms/Zug) mit net2 Gen 20 auf beiden Seiten, ohne
+Stil (`runs/search/`). Die Schwellen (80 cp × Tiefe, 100 + 100 cp × Tiefe, Fenster 30 cp, …) sind handgewählte
+Such-Struktur, kein Schachwissen; SEE rechnet mit den gelernten Figurenwerten.
+
+| Technik (gegen die jeweils vorige Standardsuche) | Elo |
+|---|---|
+| Reverse Futility Pruning (`rfp`) | +41 ± 20 |
+| Aspiration Windows (`asp`) | +23 ± 19 |
+| Futility Pruning (`fp`) | +12 ± 20 |
+| Late Move Pruning (`lmp`) | −17 ± 20 – verworfen |
+| **rfp + asp + fp zusammen** | **+69 ± 14** → neuer Standard (M20) |
+| 50-Züge-Skalierung der Bewertung (`fifty`) | −5 ± 14 |
+| logarithmisches LMR (`lmrlog`) | +6 ± 14 |
+| History-Malus (`hist`) | −5 ± 14 |
+| **SEE-Pruning in der Ruhesuche (`see`)** | **+47 ± 14** → Standard (M21) |
+
+- Trainingssuche (`exact`) unverändert (Fingerabdruck 14201976); Standard-Fingerabdruck jetzt 10195125.
+- **Zeiteinteilung mit Uhr** (Lichess): keine neue Iteration nach der halben Zielzeit, hartes Limit
+  min(15 % Restzeit, 2 × Ziel). Vorher dauerte der erste Zug einer 3+2-Partie 22 s, Lichess brach die ersten Partien
+  wegen Inaktivität ab.
+- Neue Tests: SEE-Werte in sechs Abtauschstellungen, Mattdistanzen mit Standard- und allen Optionen.
+- Lichess: Der Bot spielt seit M21 mit dieser Suche, net2 Gen 20, Contempt 15, KnightLove 20 (Contempt 50 hatte in
+  einer Partie 40 Züge lang Remisvarianten abgelehnt und dann verloren). Gegner 1600–2300.
+
+### Meilenstein 22: Neustarts aus Endspielstellungen – schadet
+
+Beobachtung auf Lichess: lange Endspiele ohne Plan (Bewertung 40 Züge konstant, dann plötzlich Fortschritt oder
+Verlust). Idee aus der Recherche (Braun 2026): Selbstpartien teils aus Stellungen früherer Partien starten.
+`selfplay --starts FILE --start-share PCT --start-max-pieces N --start-plies N` (Neustart = gespeicherte Stellung +
+2 Zufallszüge), `match --starts` für Endspiel-Tests, `net-generations.sh`: `START_SHARE`, `START_MAX_PIECES`
+(Stellungen aus den Partien der Vorgeneration). Datenformat: Bit 1 im Flag-Byte markiert die erste Stellung jeder
+Partie – sonst konnte ein Neustart, dessen letzte Stellung Ply 7 hat, mit der folgenden normalen Partie (ab Ply 8)
+verschmelzen (im ersten Lauf 4–14 Partien pro Datei).
+
+Der erste Lauf (net7: −37 ± 14 / +3 ± 14) war doppelt verfälscht: verschmolzene Partien, und seit M21 lösten Tuner
+und nnue-train Stellungen mit der neuen Standardsuche (SEE) auf – andere Labels als bei net2. Beides behoben
+(Auflösung wieder mit `SEARCH_ALL`, geprüft: identische Start-Loss wie vor M21). Wiederholung **net7b**
+(20 Generationen, 4365 CPU-s, alle Dateien 2000 Partien, 0 Label-Fehler):
+
+| net7b Gen 20 gegen net2 Gen 20 (2000 Partien, 5000 Knoten) | Elo |
+|---|---|
+| normale Partien | **−29 ± 14** |
+| aus Endspielstellungen (≤ 14 Steine, aus net5 Gen 19) | +8 ± 14 |
+
+- Die Endspiele werden nicht besser, und der Rest leidet (30 % weniger Daten aus Eröffnung und Mittelspiel).
+  Vermutlich lernt das Netz Endspiele mit Ergebnis-/Suchlabels aus flacher Suche nicht besser – das Problem dort
+  ist der Horizont, nicht die Bewertung einzelner Stellungen. Optionen bleiben, Standard aus.
 
 ### Recherche (Oktober 2026): Ideen für mehr Lernen pro CPU-Sekunde
 

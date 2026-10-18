@@ -47,18 +47,39 @@ void search_clear(Search *s);
  * random even with learned weights (otherwise only with all weights 0) –
  * costs depth, but self-play training learned more per game with it.
  */
-enum { SEARCH_PVS = 1, SEARCH_NMP = 2, SEARCH_LMR = 4, SEARCH_ALL = 7, SEARCH_EXACT_TIES = 8 };
+enum { SEARCH_PVS = 1, SEARCH_NMP = 2, SEARCH_LMR = 4, SEARCH_ALL = 7, SEARCH_EXACT_TIES = 8,
+       /* Milestone 20, measured one by one: reverse futility, futility and late move pruning, aspiration windows. */
+       SEARCH_RFP = 16, SEARCH_FP = 32, SEARCH_LMP = 64, SEARCH_ASP = 128,
+       /* Scale evaluations toward a draw as the 50-move counter rises (rewards progress). */
+       SEARCH_FIFTY = 256,
+       /* Milestone 21: logarithmic late move reductions, history malus, SEE pruning in quiescence. */
+       SEARCH_LMRLOG = 512, SEARCH_HIST = 1024, SEARCH_SEE = 2048,
+       SEARCH_EVERYTHING = 4095 & ~SEARCH_EXACT_TIES };
 
 /* What the engine uses unless told otherwise (UCI, self-play, matches, bench). */
-#define SEARCH_DEFAULT ((unsigned)SEARCH_ALL)
+/*
+ * Milestone 20: rfp + asp + fp gave +69 +/- 14 Elo at equal time; lmp (-17) is left out.
+ * Milestone 21: see gave another +47 +/- 14; lmrlog (+6), hist (-5) and fifty (-5) are left out.
+ */
+#define SEARCH_DEFAULT ((unsigned)(SEARCH_ALL | SEARCH_RFP | SEARCH_ASP | SEARCH_FP | SEARCH_SEE))
 
 void search_set_options(Search *s, unsigned options);
 
 /*
- * Parses "none" or a comma list of pvs, nmp, lmr, all (= the three) and exact,
- * e.g. "all,exact"; false if empty, unknown, or NMP/LMR without PVS.
+ * Parses "none" or a comma list of pvs, nmp, lmr, all (= the three), exact,
+ * rfp, fp, lmp, asp, fifty, lmrlog, hist and see, e.g. "all,exact" (the
+ * default is all,rfp,asp,fp,see); false if empty, unknown, or NMP/LMR
+ * without PVS.
  */
 bool search_parse_options(const char *text, unsigned *options);
+
+/*
+ * Static exchange evaluation of a capture with the learned piece values:
+ * the material balance after both sides capture on the target square in
+ * order of their cheapest piece, each free to stop. Promotions and en
+ * passant count as 0 (never pruned).
+ */
+int search_see(const Search *s, const Board *b, Move m);
 
 /*
  * Evaluate with this network instead of the linear weights (experiment); the
@@ -67,6 +88,14 @@ bool search_parse_options(const char *text, unsigned *options);
  * (nnue_quantize); false if the network cannot be stored that way or memory
  * runs out, and the search then evaluates linearly.
  */
+/*
+ * Playing style (for the Lichess bot; both 0 by default, as in training):
+ * contempt makes a draw count that much against the searching side, so it
+ * avoids draws; knight_love adds that much per knight it has more than the
+ * opponent. Changing the style clears the hash table.
+ */
+void search_set_style(Search *s, int contempt, int knight_love);
+
 typedef struct Network Network;
 bool search_set_network(Search *s, const Network *net);
 

@@ -87,6 +87,9 @@ static int oracle_mate(const Board *b, int max) {
 
 /* ---- Tests ---- */
 
+/* Node count of the weighted default search below; changes only with the search. */
+#define WEIGHTED_BENCH 139769
+
 static Search *search;
 
 static SearchResult search_fen(const char *fen, int depth, Game *game) {
@@ -159,7 +162,57 @@ static void test_mates(void) {
         test_mates_with(SEARCH_PVS, weighted ? "pvs, weights" : "pvs");
         test_mates_with(SEARCH_ALL, weighted ? "pvs+nmp+lmr, weights" : "pvs+nmp+lmr");
         test_mates_with(SEARCH_ALL | SEARCH_EXACT_TIES, weighted ? "all+exact, weights" : "all+exact");
+        test_mates_with(SEARCH_DEFAULT, weighted ? "default, weights" : "default");
+        test_mates_with(SEARCH_EVERYTHING, weighted ? "everything, weights" : "everything");
     }
+
+    /* Static exchange evaluation with these material values. */
+    search_set_weights(search, &material);
+    static const struct {
+        const char *fen, *move;
+        int see;
+    } exchanges[] = {
+        { "1k1r4/1pp4p/p7/4p3/8/P5P1/1PP4P/2K1R3 w - - 0 1", "e1e5", 100 },         /* free pawn */
+        { "1k1r3q/1ppn3p/p4b2/4p3/8/P2N2P1/1PP1R1BP/2K1Q3 w - - 0 1", "d3e5", -200 }, /* N for P */
+        { "4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1", "e4d5", 100 },                         /* pawn takes pawn */
+        { "4k3/8/2p5/3p4/4P3/8/8/4K3 w - - 0 1", "e4d5", 0 },                         /* even trade */
+        { "4k3/8/2p5/3r4/4P3/8/8/4K3 w - - 0 1", "e4d5", 400 },                       /* rook for a pawn */
+        { "4k3/8/2b5/3r4/2N5/8/8/3QK3 w - - 0 1", "c4d6", 0 },                        /* quiet: not a capture */
+    };
+    for (size_t i = 0; i < sizeof exchanges / sizeof exchanges[0]; i++) {
+        Board b;
+        CHECK(board_from_fen(&b, exchanges[i].fen), "see fen %zu", i);
+        MoveList list;
+        movegen_legal(&b, &list);
+        Move m = 0;
+        for (int k = 0; k < list.count; k++) {
+            char uci[6];
+            move_to_uci(list.moves[k], uci);
+            if (strcmp(uci, exchanges[i].move) == 0)
+                m = list.moves[k];
+        }
+        CHECK(m, "see move %s", exchanges[i].move);
+        CHECK(search_see(search, &b, m) == exchanges[i].see, "see %s: %d, expected %d", exchanges[i].move,
+              search_see(search, &b, m), exchanges[i].see);
+    }
+
+    /*
+     * Fingerprint of the default search with weights: the engine bench runs with all weights 0,
+     * where RFP, futility, SEE and null moves are off. Update only for an intended search change.
+     */
+    static const char *const bench_fens[] = {
+        "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+    };
+    search_set_options(search, SEARCH_DEFAULT);
+    uint64_t weighted_nodes = 0;
+    for (size_t i = 0; i < sizeof bench_fens / sizeof bench_fens[0]; i++) {
+        Game game;
+        weighted_nodes += search_fen(bench_fens[i], 7, &game).nodes;
+    }
+    CHECK(weighted_nodes == WEIGHTED_BENCH, "weighted default search fingerprint %" PRIu64 " nodes, expected %" PRIu64,
+          weighted_nodes, (uint64_t)WEIGHTED_BENCH);
     search_set_weights(search, NULL);
 
     unsigned options;

@@ -6,7 +6,7 @@
  *   nnue-train --out FILE --resolve WEIGHTS --data FILE [--data FILE ...]
  *              [--init-linear WEIGHTS] [--hidden H] [--epochs N] [--batch N] [--lr X]
  *              [--lr-linear X] [--wd X] [--train-games N] [--threads N] [--seed N] [--smooth X]
- *              [--init-net FILE] [--lambda X]
+ *              [--init-net FILE] [--lambda X] [--val-files N]
  *
  * Positions are resolved to quiet leaves with the --resolve linear weights,
  * as in the linear tuner. Split by the game number inside each file: % 10 == 0
@@ -22,6 +22,11 @@
  * target where the data has one, as the linear tuner does:
  * X * sigmoid(score) + (1 - X) * result, the score alone at the ply limit
  * (for X > 0; X = 0 is the plain result everywhere).
+ *
+ * --val-files N (milestone 17): only the last N --data files validate; the
+ * validation games of earlier files are trained on. In the network loop,
+ * older files' validation games already picked earlier networks, so they
+ * would favour keeping the network unchanged.
  *
  * --smooth X (milestone 13): game results label whole games, so they say
  * nothing about how the value changes from one move to the next - yet that
@@ -134,6 +139,7 @@ static void *resolve_worker(void *arg) {
     Job *job = arg;
     Search *s = search_new(1);
     search_set_weights(s, job->weights);
+    search_set_options(s, SEARCH_ALL); /* quiet leaves as before milestone 21 (no SEE pruning) */
     job->counts = xcalloc(job->end - job->begin, 1);
     if (job->d->child_offset)
         job->child_counts = xcalloc(job->end - job->begin, 1);
@@ -166,8 +172,13 @@ static void *resolve_worker(void *arg) {
     return NULL;
 }
 
+/* Which part game number game of a file goes to; files that do not validate train on their validation games. */
+static int part_of(long game, bool validates) {
+    return game % 10 == 0 ? TEST : game % 10 == 5 && validates ? VALIDATION : TRAIN;
+}
+
 static bool load(NetData *d, char **paths, int path_count, long train_games, const Weights *resolve, int threads,
-                 bool children, double lambda) {
+                 bool children, double lambda, long val_files) {
     memset(d, 0, sizeof *d);
     uint8_t (*records)[DATA_RECORD_SIZE] = NULL;
     uint8_t *split = NULL;
@@ -191,9 +202,9 @@ static bool load(NetData *d, char **paths, int path_count, long train_games, con
             if (!data_read(f, record_size, r))
                 return false;
             int ply = r[30] | r[31] << 8;
-            if (ply != prev + 1) {
+            if (data_new_game(r, prev)) {
                 game++;
-                total_train += game % 10 != 0 && game % 10 != 5;
+                total_train += part_of(game, val_files == 0 || p >= path_count - val_files) == TRAIN;
             }
             prev = ply;
         }
@@ -224,9 +235,9 @@ static bool load(NetData *d, char **paths, int path_count, long train_games, con
             if (!data_read(f, record_size, r))
                 return false;
             int ply = r[30] | r[31] << 8;
-            if (ply != prev + 1) {
+            if (data_new_game(r, prev)) {
                 game++;
-                part = game % 10 == 0 ? TEST : game % 10 == 5 ? VALIDATION : TRAIN;
+                part = part_of(game, val_files == 0 || p >= path_count - val_files);
                 keep = true;
                 if (part == TRAIN && train_games > 0) {
                     /* keep train game t if floor((t + 1) N / T) > floor(t N / T) */
@@ -500,7 +511,7 @@ int main(int argc, char **argv) {
     char *paths[MAX_FILES];
     int path_count = 0;
     const char *out = NULL, *resolve_path = NULL, *init_path = NULL, *init_net_path = NULL;
-    long hidden = 32, epochs = 30, batch = 16384, train_games = 0, threads = 1, seed = 1;
+    long hidden = 32, epochs = 30, batch = 16384, train_games = 0, threads = 1, seed = 1, val_files = 0;
     double lr = 1e-3, lr_linear = 0.05, wd = 0.01, smooth = 0, lambda = 0;
 
     for (int i = 1; i < argc; i += 2) {
@@ -526,6 +537,8 @@ int main(int argc, char **argv) {
             ok = parse_long(value, &batch) && batch >= CHUNKS;
         else if (strcmp(key, "--train-games") == 0)
             ok = parse_long(value, &train_games);
+        else if (strcmp(key, "--val-files") == 0)
+            ok = parse_long(value, &val_files);
         else if (strcmp(key, "--threads") == 0)
             ok = parse_long(value, &threads) && threads >= 1;
         else if (strcmp(key, "--seed") == 0)
@@ -567,7 +580,7 @@ int main(int argc, char **argv) {
     }
 
     NetData d;
-    if (!load(&d, paths, path_count, train_games, &resolve, (int)threads, hidden > 0, lambda))
+    if (!load(&d, paths, path_count, train_games, &resolve, (int)threads, hidden > 0, lambda, val_files))
         return 1;
     fprintf(stderr, "games train/val/test %zu/%zu/%zu, positions %zu/%zu/%zu\n", d.games[TRAIN],
             d.games[VALIDATION], d.games[TEST], d.in_split[TRAIN], d.in_split[VALIDATION], d.in_split[TEST]);
